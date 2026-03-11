@@ -14,7 +14,7 @@ The fee formula is: **fee = feeBase × quantity × price × (1 - price)**
 Calculates the required fee amount in microunits for a given order.
 
 ```typescript
-import { calculateFee } from '@alphaarcade/alpha-sdk';
+import { calculateFee } from '@alpha-arcade/sdk';
 
 const fee = calculateFee(quantity, price, feeBase);
 ```
@@ -89,7 +89,7 @@ console.log(fee10); // => 25000
 Calculates the fee when given a total amount that includes the fee. This is useful when you know the total amount you want to spend (including fees) and need to determine how much of that is the fee.
 
 ```typescript
-import { calculateFeeFromTotal } from '@alphaarcade/alpha-sdk';
+import { calculateFeeFromTotal } from '@alpha-arcade/sdk';
 
 const fee = calculateFeeFromTotal(totalAmount, price, feeBase);
 ```

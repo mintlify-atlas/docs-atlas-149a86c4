@@ -15,7 +15,7 @@ The matching engine utility helps you find counterparty orders in the orderbook 
 Computes matching counterparty orders from an orderbook for a given order.
 
 ```typescript
-import { calculateMatchingOrders } from '@alphaarcade/alpha-sdk';
+import { calculateMatchingOrders } from '@alpha-arcade/sdk';
 
 const matches = calculateMatchingOrders(
   orderbook,
@@ -262,8 +262,8 @@ console.log(matches); // => []
 This function is typically used internally by `createMarketOrder()`, but you can also call it directly to preview matches before placing an order:
 
 ```typescript
-import { AlphaClient } from '@alphaarcade/alpha-sdk';
-import { calculateMatchingOrders } from '@alphaarcade/alpha-sdk';
+import { AlphaClient } from '@alpha-arcade/sdk';
+import { calculateMatchingOrders } from '@alpha-arcade/sdk';
 
 const client = new AlphaClient(config);
 

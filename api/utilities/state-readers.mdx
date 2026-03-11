@@ -17,7 +17,7 @@ The state reader utilities help you fetch and decode the global state of market 
 Reads the global state of a market app from the chain using the algod client.
 
 ```typescript
-import { getMarketGlobalState } from '@alphaarcade/alpha-sdk';
+import { getMarketGlobalState } from '@alpha-arcade/sdk';
 import algosdk from 'algosdk';
 
 const algodClient = new algosdk.Algodv2(token, server, port);
@@ -69,7 +69,7 @@ type MarketGlobalState = {
 #### Basic usage
 
 ```typescript
-import { getMarketGlobalState } from '@alphaarcade/alpha-sdk';
+import { getMarketGlobalState } from '@alpha-arcade/sdk';
 import algosdk from 'algosdk';
 
 const algodClient = new algosdk.Algodv2(
@@ -119,7 +119,7 @@ console.log(`NO supply: ${(state.no_supply / 1_000_000).toFixed(6)} shares`);
 Reads the global state of an escrow app via the indexer. Escrow apps represent individual open orders on the orderbook.
 
 ```typescript
-import { getEscrowGlobalState } from '@alphaarcade/alpha-sdk';
+import { getEscrowGlobalState } from '@alpha-arcade/sdk';
 import algosdk from 'algosdk';
 
 const indexerClient = new algosdk.Indexer(token, server, port);
@@ -164,7 +164,7 @@ type EscrowGlobalState = {
 #### Read order details
 
 ```typescript
-import { getEscrowGlobalState } from '@alphaarcade/alpha-sdk';
+import { getEscrowGlobalState } from '@alpha-arcade/sdk';
 import algosdk from 'algosdk';
 
 const indexerClient = new algosdk.Indexer(
@@ -227,7 +227,7 @@ if (orderType === 'MARKET') {
 Checks if an address has opted into an Algorand Standard Asset (ASA). This is required before an account can receive tokens on Algorand.
 
 ```typescript
-import { checkAssetOptIn } from '@alphaarcade/alpha-sdk';
+import { checkAssetOptIn } from '@alpha-arcade/sdk';
 import algosdk from 'algosdk';
 
 const algodClient = new algosdk.Algodv2(token, server, port);
@@ -259,7 +259,7 @@ const isOptedIn = await checkAssetOptIn(algodClient, address, assetId);
 #### Check if opted into market tokens
 
 ```typescript
-import { checkAssetOptIn, getMarketGlobalState } from '@alphaarcade/alpha-sdk';
+import { checkAssetOptIn, getMarketGlobalState } from '@alpha-arcade/sdk';
 import algosdk from 'algosdk';
 
 const algodClient = new algosdk.Algodv2(
@@ -287,7 +287,7 @@ console.log(`USDC opt-in: ${usdcOptedIn}`);
 #### Validate before trading
 
 ```typescript
-import { checkAssetOptIn, getMarketGlobalState } from '@alphaarcade/alpha-sdk';
+import { checkAssetOptIn, getMarketGlobalState } from '@alpha-arcade/sdk';
 
 const validateMarketAccess = async (
   algodClient: algosdk.Algodv2,
@@ -349,6 +349,75 @@ optInStatus.forEach((isOptedIn, assetId) => {
   console.log(`Asset ${assetId}: ${isOptedIn ? 'opted in' : 'not opted in'}`);
 });
 ```
+
+## decodeGlobalState
+
+Low-level utility that decodes raw global state arrays from Algorand into JavaScript objects. This function handles base64 decoding and type conversion automatically.
+
+<Note>
+Most users should use `getMarketGlobalState` or `getEscrowGlobalState` instead, which call this function internally. Use `decodeGlobalState` directly only if you need custom state decoding logic.
+</Note>
+
+```typescript
+import { decodeGlobalState } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const algodClient = new algosdk.Algodv2(token, server, port);
+const appInfo = await algodClient.getApplicationByID(appId).do();
+const rawState = appInfo['params']['global-state'] || appInfo.params?.globalState;
+
+const decoded = decodeGlobalState(rawState);
+```
+
+### Parameters
+
+<ParamField path="rawState" type="any[]" required>
+  Raw global-state array from algod or indexer API response
+</ParamField>
+
+### Returns
+
+<ResponseField name="state" type="Record<string, any>">
+  Decoded key-value object with:
+  - String keys decoded from base64
+  - Number values for integers
+  - Algorand addresses for 32-byte values in address fields
+  - Raw bytes for other byte values
+</ResponseField>
+
+### How It Works
+
+The function performs these transformations:
+
+1. **Key decoding**: Base64-encoded keys → UTF-8 strings
+2. **Type handling**:
+   - Type 1 (bytes) → Algorand address if 32 bytes and address field, otherwise raw bytes
+   - Type 2 (uint) → JavaScript number
+3. **Address recognition**: Automatically converts 32-byte values in fields like `owner`, `oracle_address`, `fee_address`, etc. to Algorand addresses
+
+### Example
+
+```typescript
+import { decodeGlobalState } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+
+// Get raw app state
+const appInfo = await algodClient.getApplicationByID(3012345678).do();
+const rawState = appInfo.params['global-state'] || appInfo.params?.globalState;
+
+// Decode it
+const state = decodeGlobalState(rawState);
+
+console.log(state.title); // "Will BTC reach $100k by EOY?"
+console.log(state.yes_asset_id); // 123456789
+console.log(state.oracle_address); // "ALGO_ADDRESS..."
+```
+
+<Tip>
+This function handles both v2 (kebab-case: `global-state`) and v3 (camelCase: `globalState`) API formats automatically.
+</Tip>
 
 ## Error Handling
 

@@ -422,3 +422,46 @@ const testnetClient = new AlphaClient({
 
 const client = isMainnet ? mainnetClient : testnetClient;
 ```
+
+---
+
+## Exported Constants
+
+The SDK exports default configuration constants that you can use:
+
+### DEFAULT_API_BASE_URL
+
+The default API base URL for the Alpha platform:
+
+```typescript
+import { DEFAULT_API_BASE_URL } from '@alpha-arcade/sdk';
+
+console.log(DEFAULT_API_BASE_URL); // "https://platform.alphaarcade.com/api"
+
+// Use in client config
+const client = new AlphaClient({
+  // ... other config
+  apiBaseUrl: DEFAULT_API_BASE_URL, // or omit to use this default
+});
+```
+
+### DEFAULT_MARKET_CREATOR_ADDRESS
+
+The default market creator address used for on-chain market discovery on mainnet:
+
+```typescript
+import { DEFAULT_MARKET_CREATOR_ADDRESS } from '@alpha-arcade/sdk';
+
+console.log(DEFAULT_MARKET_CREATOR_ADDRESS); 
+// "5P5Y6HTWUNG2E3VXBQDZN3ENZD3JPAIR5PKT3LOYJAPAUKOLFD6KANYTRY"
+
+// Use in client config for custom market creator filtering
+const client = new AlphaClient({
+  // ... other config
+  marketCreatorAddress: DEFAULT_MARKET_CREATOR_ADDRESS, // or omit to use this default
+});
+```
+
+<Note>
+These constants are automatically used as defaults if you don't provide `apiBaseUrl` or `marketCreatorAddress` in your configuration.
+</Note>
