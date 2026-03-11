@@ -1,0 +1,164 @@
+---
+title: "Fee Calculation"
+description: "Calculate fees for Alpha protocol orders"
+---
+
+## Overview
+
+The fee calculation utilities help you compute the required fee amount for orders. All values are in microunits where 1,000,000 = $1.00.
+
+The fee formula is: **fee = feeBase × quantity × price × (1 - price)**
+
+## calculateFee
+
+Calculates the required fee amount in microunits for a given order.
+
+```typescript
+import { calculateFee } from '@alphaarcade/alpha-sdk';
+
+const fee = calculateFee(quantity, price, feeBase);
+```
+
+### Parameters
+
+<ParamField path="quantity" type="number | bigint" required>
+  Order quantity in microunits (e.g., 1,000,000 for 1 share)
+</ParamField>
+
+<ParamField path="price" type="number | bigint" required>
+  Order price in microunits (e.g., 500,000 for $0.50)
+</ParamField>
+
+<ParamField path="feeBase" type="number | bigint" required>
+  Fee base in microunits (e.g., 70,000 for 7%)
+</ParamField>
+
+### Returns
+
+<ResponseField name="fee" type="number">
+  Fee amount in microunits (ceiling)
+</ResponseField>
+
+### Examples
+
+#### Basic fee calculation
+
+```typescript
+// 1 share at $0.50 with 7% fee base
+const fee = calculateFee(1_000_000, 500_000, 70_000);
+console.log(fee); // => 17500 (approximately $0.0175)
+```
+
+#### Different price points
+
+```typescript
+// At $0.30 (lower probability)
+const fee1 = calculateFee(1_000_000, 300_000, 70_000);
+console.log(fee1); // => 14700
+
+// At $0.70 (higher probability)
+const fee2 = calculateFee(1_000_000, 700_000, 70_000);
+console.log(fee2); // => 14700
+
+// At $0.50 (even odds)
+const fee3 = calculateFee(1_000_000, 500_000, 70_000);
+console.log(fee3); // => 17500 (highest fee at 50/50)
+```
+
+#### Multiple shares
+
+```typescript
+// 10 shares at $0.60 with 7% fee base
+const fee = calculateFee(10_000_000, 600_000, 70_000);
+console.log(fee); // => 168000 (approximately $0.168)
+```
+
+#### Different fee bases
+
+```typescript
+// 1 share at $0.50 with different fee bases
+const fee5 = calculateFee(1_000_000, 500_000, 50_000); // 5% fee
+console.log(fee5); // => 12500
+
+const fee10 = calculateFee(1_000_000, 500_000, 100_000); // 10% fee
+console.log(fee10); // => 25000
+```
+
+## calculateFeeFromTotal
+
+Calculates the fee when given a total amount that includes the fee. This is useful when you know the total amount you want to spend (including fees) and need to determine how much of that is the fee.
+
+```typescript
+import { calculateFeeFromTotal } from '@alphaarcade/alpha-sdk';
+
+const fee = calculateFeeFromTotal(totalAmount, price, feeBase);
+```
+
+### Parameters
+
+<ParamField path="totalAmount" type="number | bigint" required>
+  Total amount in microunits including fee
+</ParamField>
+
+<ParamField path="price" type="number | bigint" required>
+  Price in microunits (e.g., 500,000 for $0.50)
+</ParamField>
+
+<ParamField path="feeBase" type="number | bigint" required>
+  Fee base in microunits (e.g., 70,000 for 7%)
+</ParamField>
+
+### Returns
+
+<ResponseField name="fee" type="number">
+  Fee amount in microunits (ceiling)
+</ResponseField>
+
+### Examples
+
+#### Calculate fee from total
+
+```typescript
+// I want to spend $1.00 total at $0.50 with 7% fee base
+const fee = calculateFeeFromTotal(1_000_000, 500_000, 70_000);
+console.log(fee); // => 17241 (approximately $0.017241)
+
+// The actual quantity purchased would be:
+const quantity = 1_000_000 - fee;
+console.log(quantity); // => 982759 microunits
+```
+
+#### Reverse calculation
+
+```typescript
+// If you have a budget of $5.00 and want to know the fee
+const totalBudget = 5_000_000;
+const price = 600_000; // $0.60
+const feeBase = 70_000; // 7%
+
+const fee = calculateFeeFromTotal(totalBudget, price, feeBase);
+console.log(fee); // Fee amount
+
+const purchaseAmount = totalBudget - fee;
+console.log(purchaseAmount); // Amount that goes to purchase
+```
+
+## Fee Formula Explanation
+
+The fee formula **fee = feeBase × quantity × price × (1 - price)** is designed to:
+
+1. **Scale with quantity**: Larger orders pay proportionally more fees
+2. **Scale with risk**: The `price × (1 - price)` component creates a parabolic curve that peaks at 50% probability
+3. **Minimize fees at extremes**: Orders at very high or very low probabilities (near certainty) pay less fees
+
+### Fee curve visualization
+
+For a 1-share order with 7% fee base:
+
+- At $0.10: fee ≈ $0.0063 (0.63%)
+- At $0.30: fee ≈ $0.0147 (1.47%)
+- At $0.50: fee ≈ $0.0175 (1.75%) — maximum
+- At $0.70: fee ≈ $0.0147 (1.47%)
+- At $0.90: fee ≈ $0.0063 (0.63%)
+
+This encourages liquidity at all price levels while charging the most for trades at even odds.

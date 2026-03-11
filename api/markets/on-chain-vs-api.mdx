@@ -1,0 +1,434 @@
+---
+title: "On-Chain vs API Market Discovery"
+description: "Compare on-chain and API-based market fetching approaches"
+---
+
+## Overview
+
+The Alpha SDK supports two methods for discovering markets:
+
+1. **API-based** - Uses the Alpha REST API (requires API key)
+2. **On-chain** - Reads directly from the Algorand blockchain (no API key needed)
+
+The smart default method `getLiveMarkets()` automatically chooses based on whether an API key is configured.
+
+---
+
+## Comparison Table
+
+<Tabs>
+  <Tab title="API Method">
+    ### Alpha REST API
+    
+    **Methods:**
+    - `getLiveMarketsFromApi()`
+    - `getMarketFromApi(marketId)`
+    - `getRewardMarkets()`
+    
+    **Pros:**
+    - ✅ Rich metadata (images, categories, volume)
+    - ✅ Market probabilities (`yesProb`, `noProb`)
+    - ✅ Faster than on-chain discovery
+    - ✅ Paginated results
+    - ✅ Market slugs for URLs
+    - ✅ Featured market flags
+    - ✅ Liquidity reward data
+    
+    **Cons:**
+    - ❌ Requires API key
+    - ❌ Centralized dependency
+    - ❌ Rate limited
+    
+    **Best for:**
+    - Consumer-facing applications
+    - Rich UI/UX experiences
+    - Market browsing interfaces
+    - Analytics dashboards
+  </Tab>
+  
+  <Tab title="On-Chain Method">
+    ### Direct Blockchain
+    
+    **Methods:**
+    - `getMarketsOnChain()`
+    - `getMarketOnChain(marketAppId)`
+    
+    **Pros:**
+    - ✅ No API key required
+    - ✅ Fully decentralized
+    - ✅ Direct source of truth
+    - ✅ No rate limits
+    - ✅ Works if API is down
+    
+    **Cons:**
+    - ❌ No images or categories
+    - ❌ No volume data
+    - ❌ No probabilities
+    - ❌ Slower (multiple indexer calls)
+    - ❌ Requires pagination handling
+    
+    **Best for:**
+    - Decentralized applications
+    - Trading bots
+    - Arbitrage tools
+    - Backend services
+    - API fallback scenarios
+  </Tab>
+</Tabs>
+
+---
+
+## Data Field Comparison
+
+### Available in Both Methods
+
+These core fields are available from both API and on-chain sources:
+
+<ResponseField name="id" type="string">
+  Market identifier (UUID from API, app ID string from on-chain)
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Market question or title
+</ResponseField>
+
+<ResponseField name="marketAppId" type="number">
+  Algorand application ID of the market contract
+</ResponseField>
+
+<ResponseField name="yesAssetId" type="number">
+  YES outcome token ASA ID
+</ResponseField>
+
+<ResponseField name="noAssetId" type="number">
+  NO outcome token ASA ID
+</ResponseField>
+
+<ResponseField name="endTs" type="number">
+  Resolution timestamp in seconds (Unix epoch)
+</ResponseField>
+
+<ResponseField name="isResolved" type="boolean">
+  Whether the market has been resolved
+</ResponseField>
+
+<ResponseField name="isLive" type="boolean">
+  Whether the market is currently tradeable
+</ResponseField>
+
+<ResponseField name="feeBase" type="number">
+  Base fee percentage in microunits (e.g. 70000 = 7%)
+</ResponseField>
+
+### API Only
+
+These fields are **only available** when using API-based methods:
+
+<ResponseField name="yesProb" type="number">
+  Current YES probability (0-1)
+</ResponseField>
+
+<ResponseField name="noProb" type="number">
+  Current NO probability (0-1)
+</ResponseField>
+
+<ResponseField name="volume" type="number">
+  Total trading volume in microunits
+</ResponseField>
+
+<ResponseField name="image" type="string">
+  Market image URL
+</ResponseField>
+
+<ResponseField name="categories" type="string[]">
+  Market categories (e.g. `['Politics', 'USA']`)
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  URL-friendly market slug
+</ResponseField>
+
+<ResponseField name="featured" type="boolean">
+  Whether the market is featured
+</ResponseField>
+
+<ResponseField name="totalRewards" type="number">
+  Liquidity reward pool (microunits)
+</ResponseField>
+
+<ResponseField name="rewardsPaidOut" type="number">
+  Rewards already distributed (microunits)
+</ResponseField>
+
+<ResponseField name="rewardsSpreadDistance" type="number">
+  Max spread to qualify for rewards (microunits)
+</ResponseField>
+
+<ResponseField name="rewardsMinContracts" type="number">
+  Min order size for rewards (microunits)
+</ResponseField>
+
+<ResponseField name="lastRewardAmount" type="number">
+  Most recent reward payout (microunits)
+</ResponseField>
+
+<ResponseField name="lastRewardTs" type="number">
+  Timestamp of last reward payout
+</ResponseField>
+
+---
+
+## Code Examples
+
+### Using API (with API key)
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const client = new AlphaClient({
+  algodClient: new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443),
+  indexerClient: new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443),
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+  apiKey: process.env.ALPHA_API_KEY, // ✅ API key provided
+});
+
+// Automatically uses API
+const markets = await client.getLiveMarkets();
+
+// Rich metadata available
+markets.forEach(m => {
+  console.log(`${m.title}`);
+  console.log(`  Image: ${m.image}`);
+  console.log(`  Categories: ${m.categories?.join(', ')}`);
+  console.log(`  Volume: $${m.volume! / 1e6}`);
+  console.log(`  YES: ${m.yesProb}%, NO: ${m.noProb}%`);
+});
+```
+
+### Using On-Chain (no API key)
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const client = new AlphaClient({
+  algodClient: new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443),
+  indexerClient: new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443),
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+  // ❌ No apiKey - falls back to on-chain
+});
+
+// Automatically uses on-chain discovery
+const markets = await client.getLiveMarkets();
+
+// Only core data available
+markets.forEach(m => {
+  console.log(`${m.title}`);
+  console.log(`  App ID: ${m.marketAppId}`);
+  console.log(`  YES ASA: ${m.yesAssetId}`);
+  console.log(`  NO ASA: ${m.noAssetId}`);
+  console.log(`  Ends: ${new Date(m.endTs * 1000).toISOString()}`);
+  // ❌ m.image, m.volume, m.yesProb are undefined
+});
+```
+
+### Explicit Method Selection
+
+You can explicitly choose the method regardless of API key configuration:
+
+```typescript
+// Force API (throws if no API key)
+const apiMarkets = await client.getLiveMarketsFromApi();
+
+// Force on-chain (works even with API key)
+const onChainMarkets = await client.getMarketsOnChain();
+
+// Smart default (recommended)
+const markets = await client.getLiveMarkets();
+```
+
+---
+
+## Market Identification
+
+### API-based ID
+
+When using the API, markets are identified by **UUID**:
+
+```typescript
+const market = await client.getMarketFromApi('abc123-def456-ghi789');
+console.log(market?.id); // 'abc123-def456-ghi789'
+console.log(market?.marketAppId); // 1234567890
+```
+
+### On-chain ID
+
+When reading from blockchain, markets are identified by **app ID**:
+
+```typescript
+const market = await client.getMarketOnChain(1234567890);
+console.log(market?.id); // '1234567890'
+console.log(market?.marketAppId); // 1234567890
+```
+
+### Smart Default Behavior
+
+The `getMarket()` method adapts based on configuration:
+
+```typescript
+// With API key: expects UUID
+const market1 = await client.getMarket('abc123-def456-ghi789');
+
+// Without API key: expects app ID string
+const market2 = await client.getMarket('1234567890');
+```
+
+---
+
+## Performance Considerations
+
+### API Method
+
+**Speed:** ~500-1000ms for 100 markets (single paginated request)
+
+```typescript
+console.time('API fetch');
+const markets = await client.getLiveMarketsFromApi();
+console.timeEnd('API fetch');
+// API fetch: 750ms
+```
+
+**Optimization:**
+- Results are cached server-side
+- Pagination is automatic
+- Single HTTP request per page
+
+### On-Chain Method
+
+**Speed:** ~3-10 seconds for 100 markets (multiple indexer queries)
+
+```typescript
+console.time('On-chain fetch');
+const markets = await client.getMarketsOnChain();
+console.timeEnd('On-chain fetch');
+// On-chain fetch: 5200ms
+```
+
+**Optimization:**
+- Uses indexer pagination (100 apps/page)
+- Decodes global state for each app
+- Groups multi-choice options
+
+**Recommendation:** For UI/UX, use API when possible. For decentralization, on-chain is acceptable for backend/batch operations.
+
+---
+
+## When to Use Each Method
+
+### Use API Method When:
+
+✅ Building consumer-facing UI  
+✅ Need images and categories  
+✅ Displaying market probabilities  
+✅ Showing trading volume  
+✅ Fetching liquidity reward markets  
+✅ Performance is critical  
+
+**Example:** Market browsing page with filters
+
+```typescript
+const markets = await client.getLiveMarketsFromApi();
+
+// Filter by category
+const politicsMarkets = markets.filter(m => 
+  m.categories?.includes('Politics')
+);
+
+// Sort by volume
+const topVolume = markets.sort((a, b) => 
+  (b.volume || 0) - (a.volume || 0)
+);
+```
+
+### Use On-Chain Method When:
+
+✅ Building fully decentralized dApp  
+✅ No API key available  
+✅ API is down (fallback)  
+✅ Need trustless verification  
+✅ Building trading bot (core data only)  
+✅ Backend batch processing  
+
+**Example:** Automated trading bot
+
+```typescript
+// No API dependency - fully on-chain
+const markets = await client.getMarketsOnChain();
+
+// Trade based on app ID and token ASAs
+for (const market of markets) {
+  const orderbook = await client.getOrderbook(market.marketAppId);
+  
+  // Execute strategy using core on-chain data
+  // (no need for images, categories, etc.)
+}
+```
+
+---
+
+## Hybrid Approach
+
+Combine both methods for resilience:
+
+```typescript
+const fetchMarketsWithFallback = async () => {
+  try {
+    // Try API first (faster + richer data)
+    console.log('Fetching from API...');
+    return await client.getLiveMarketsFromApi();
+  } catch (error) {
+    // Fall back to on-chain if API fails
+    console.warn('API failed, falling back to on-chain:', error.message);
+    return await client.getMarketsOnChain();
+  }
+};
+
+const markets = await fetchMarketsWithFallback();
+console.log(`Fetched ${markets.length} markets (source: ${markets[0]?.source})`);
+```
+
+---
+
+## Getting an API Key
+
+1. Visit [Alpha Arcade Account page](https://alphaarcade.com/account)
+2. Generate an API key
+3. Add to your environment:
+
+```bash
+ALPHA_API_KEY=your_api_key_here
+```
+
+4. Configure the client:
+
+```typescript
+const client = new AlphaClient({
+  // ... other config
+  apiKey: process.env.ALPHA_API_KEY,
+});
+```
+
+---
+
+## Related
+
+- [Get Markets](/api/markets/get-markets) - Market fetching methods
+- [Reward Markets](/api/markets/reward-markets) - Liquidity rewards (API only)
+- [AlphaClient](/api/client) - Client configuration

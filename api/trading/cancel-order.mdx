@@ -1,0 +1,97 @@
+---
+title: "cancelOrder"
+description: "Cancel an open order by deleting its escrow application"
+---
+
+## Method Signature
+
+```typescript
+async cancelOrder(params: CancelOrderParams): Promise<CancelOrderResult>
+```
+
+Cancels an open order by deleting its escrow app. Returns the escrowed funds (USDC or outcome tokens) to the order owner, and reclaims the ALGO minimum balance used by the escrow app.
+
+## Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The market application ID on Algorand
+</ParamField>
+
+<ParamField path="escrowAppId" type="number" required>
+  The escrow app ID of the order to cancel. This is returned from `createLimitOrder` or `createMarketOrder`.
+</ParamField>
+
+<ParamField path="orderOwner" type="string" required>
+  The Algorand address of the order owner. Must match the signer's address.
+</ParamField>
+
+## Return Type
+
+```typescript
+type CancelOrderResult = {
+  success: boolean;
+  txIds: string[];
+  confirmedRound: number;
+}
+```
+
+<ResponseField name="success" type="boolean">
+  Whether the cancellation succeeded. Always `true` if the method completes without throwing an error.
+</ResponseField>
+
+<ResponseField name="txIds" type="string[]">
+  Array of transaction IDs from the cancellation
+</ResponseField>
+
+<ResponseField name="confirmedRound" type="number">
+  The confirmed round number on the blockchain
+</ResponseField>
+
+## Example
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+});
+
+const marketAppId = 123456789;
+
+// Get open orders
+const orders = await client.getOpenOrders(marketAppId);
+console.log(`Found ${orders.length} open orders`);
+
+if (orders.length > 0) {
+  const order = orders[0];
+  console.log(`Cancelling order ${order.escrowAppId}...`);
+
+  const result = await client.cancelOrder({
+    marketAppId,
+    escrowAppId: order.escrowAppId,
+    orderOwner: account.addr.toString(),
+  });
+
+  console.log(`Cancelled: ${result.success}`);
+  console.log(`Tx IDs: ${result.txIds.join(', ')}`);
+}
+```
+
+## Behavior Notes
+
+- **Refunds**: The escrow app returns all escrowed collateral (USDC for buy orders, outcome tokens for sell orders) to the order owner.
+- **MBR Recovery**: The ~957,000 microAlgos used for the escrow app's minimum balance requirement is returned to the owner.
+- **Partially Filled Orders**: You can cancel orders that have been partially filled. Only the unfilled quantity's collateral is returned.
+- **Fully Filled Orders**: Once an order is 100% filled, its escrow is automatically deleted by the matching transaction. You cannot cancel a fully filled order.
+- **Transaction Fees**: Cancellation costs ~7,000 microAlgos in transaction fees.
+- **Authorization**: Only the order owner can cancel their orders. The `orderOwner` parameter must match the active signer's address.

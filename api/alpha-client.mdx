@@ -1,0 +1,835 @@
+---
+title: AlphaClient
+description: Main client for interacting with Alpha Market prediction markets on Algorand
+---
+
+## Overview
+
+The `AlphaClient` is the main entry point for interacting with Alpha Market prediction markets on Algorand. It provides a comprehensive set of methods organized into four categories:
+
+- **Trading**: Create, modify, and cancel orders
+- **Positions**: Manage outcome token positions and claims
+- **Orderbook**: Read on-chain orderbook data
+- **Markets**: Fetch market information
+
+## Constructor
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+const account = algosdk.mnemonicToSecretKey('your mnemonic ...');
+const signer = algosdk.makeBasicAccountTransactionSigner(account);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer,
+  activeAddress: account.addr.toString(),
+  matcherAppId: 3078581851,
+  usdcAssetId: 31566704,
+});
+```
+
+<ParamField path="config" type="AlphaClientConfig" required>
+  Configuration object for initializing the client. See [Configuration](/api/configuration) for details.
+</ParamField>
+
+## Trading Methods
+
+Methods for creating, modifying, and canceling orders on prediction markets.
+
+### createLimitOrder
+
+Creates a limit order on a market. A limit order sits on the orderbook at your specified price until matched or cancelled. Slippage is 0 — the order executes only at your exact price.
+
+```typescript
+const result = await client.createLimitOrder({
+  marketAppId: 123456789,
+  position: 1, // 1 = Yes, 0 = No
+  price: 500_000, // $0.50 in microunits
+  quantity: 1_000_000, // 1 share in microunits
+  isBuying: true,
+});
+
+console.log('Escrow App ID:', result.escrowAppId);
+console.log('Transaction IDs:', result.txIds);
+```
+
+<ParamField path="params" type="CreateLimitOrderParams" required>
+  Order parameters
+  
+  <Accordion title="CreateLimitOrderParams fields">
+    <ParamField path="marketAppId" type="number" required>
+      The market application ID on Algorand
+    </ParamField>
+    
+    <ParamField path="position" type="0 | 1" required>
+      Position to trade: `1` for Yes, `0` for No
+    </ParamField>
+    
+    <ParamField path="price" type="number" required>
+      Price in microunits (e.g., `500000` = $0.50)
+    </ParamField>
+    
+    <ParamField path="quantity" type="number" required>
+      Quantity in microunits (e.g., `1000000` = 1 share)
+    </ParamField>
+    
+    <ParamField path="isBuying" type="boolean" required>
+      Whether this is a buy order (`true`) or sell order (`false`)
+    </ParamField>
+    
+    <ParamField path="feeBase" type="number">
+      Fee base in microunits (e.g., `70000` = 7%). If omitted, reads from market global state.
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+<ResponseField name="CreateOrderResult" type="object">
+  <ResponseField name="escrowAppId" type="number">
+    The escrow app ID of the newly created order
+  </ResponseField>
+  
+  <ResponseField name="txIds" type="string[]">
+    Transaction IDs from the atomic group
+  </ResponseField>
+  
+  <ResponseField name="confirmedRound" type="number">
+    Confirmed round number
+  </ResponseField>
+</ResponseField>
+
+---
+
+### createMarketOrder
+
+Creates a market order with automatic matching. Fetches the live orderbook, finds the best counterparty orders within your slippage tolerance, then creates the order and proposes matches in a single atomic transaction group.
+
+```typescript
+const result = await client.createMarketOrder({
+  marketAppId: 123456789,
+  position: 1,
+  price: 500_000,
+  quantity: 5_000_000, // 5 shares
+  isBuying: true,
+  slippage: 50_000, // $0.05 slippage tolerance
+});
+
+console.log('Matched quantity:', result.matchedQuantity);
+console.log('Matched price:', result.matchedPrice);
+```
+
+<ParamField path="params" type="CreateMarketOrderParams" required>
+  Order parameters
+  
+  <Accordion title="CreateMarketOrderParams fields">
+    <ParamField path="marketAppId" type="number" required>
+      The market application ID
+    </ParamField>
+    
+    <ParamField path="position" type="0 | 1" required>
+      Position to trade: `1` for Yes, `0` for No
+    </ParamField>
+    
+    <ParamField path="price" type="number" required>
+      Price in microunits (e.g., `500000` = $0.50)
+    </ParamField>
+    
+    <ParamField path="quantity" type="number" required>
+      Quantity in microunits
+    </ParamField>
+    
+    <ParamField path="isBuying" type="boolean" required>
+      Whether this is a buy order
+    </ParamField>
+    
+    <ParamField path="slippage" type="number" required>
+      Slippage tolerance in microunits (e.g., `50000` = $0.05)
+    </ParamField>
+    
+    <ParamField path="feeBase" type="number">
+      Fee base in microunits. If omitted, reads from market global state.
+    </ParamField>
+    
+    <ParamField path="matchingOrders" type="CounterpartyMatch[]">
+      Pre-computed matching orders. If omitted, auto-fetches orderbook and computes matches.
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+<ResponseField name="CreateOrderResult" type="object">
+  <ResponseField name="escrowAppId" type="number">
+    The escrow app ID of the newly created order
+  </ResponseField>
+  
+  <ResponseField name="txIds" type="string[]">
+    Transaction IDs from the atomic group
+  </ResponseField>
+  
+  <ResponseField name="confirmedRound" type="number">
+    Confirmed round number
+  </ResponseField>
+  
+  <ResponseField name="matchedQuantity" type="number">
+    Total quantity that was matched
+  </ResponseField>
+  
+  <ResponseField name="matchedPrice" type="number">
+    Weighted average fill price in microunits (accounts for complementary matching)
+  </ResponseField>
+</ResponseField>
+
+---
+
+### cancelOrder
+
+Cancels an open order by deleting its escrow app. Returns the escrowed funds (USDC or outcome tokens) to the order owner, and reclaims the ALGO minimum balance used by the escrow app.
+
+```typescript
+const result = await client.cancelOrder({
+  marketAppId: 123456789,
+  escrowAppId: 987654321,
+  orderOwner: 'WALLETADDRESS...'
+});
+
+console.log('Cancelled:', result.success);
+```
+
+<ParamField path="params" type="CancelOrderParams" required>
+  Cancel parameters
+  
+  <Accordion title="CancelOrderParams fields">
+    <ParamField path="marketAppId" type="number" required>
+      The market application ID
+    </ParamField>
+    
+    <ParamField path="escrowAppId" type="number" required>
+      The escrow app ID of the order to cancel
+    </ParamField>
+    
+    <ParamField path="orderOwner" type="string" required>
+      The owner address of the order
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+<ResponseField name="CancelOrderResult" type="object">
+  <ResponseField name="success" type="boolean">
+    Whether the cancellation succeeded
+  </ResponseField>
+  
+  <ResponseField name="txIds" type="string[]">
+    Transaction IDs
+  </ResponseField>
+  
+  <ResponseField name="confirmedRound" type="number">
+    Confirmed round number
+  </ResponseField>
+</ResponseField>
+
+---
+
+### proposeMatch
+
+Proposes a match between an existing maker order and a new taker order. Use this for advanced matching scenarios where you want to explicitly specify which orders to match against.
+
+```typescript
+const result = await client.proposeMatch({
+  marketAppId: 123456789,
+  makerEscrowAppId: 987654321,
+  makerAddress: 'MAKERADDRESS...',
+  quantityMatched: 1_000_000, // 1 share
+});
+```
+
+<ParamField path="params" type="ProposeMatchParams" required>
+  Match parameters
+  
+  <Accordion title="ProposeMatchParams fields">
+    <ParamField path="marketAppId" type="number" required>
+      The market application ID
+    </ParamField>
+    
+    <ParamField path="makerEscrowAppId" type="number" required>
+      The maker escrow app ID (existing order)
+    </ParamField>
+    
+    <ParamField path="makerAddress" type="string" required>
+      The maker's Algorand address
+    </ParamField>
+    
+    <ParamField path="quantityMatched" type="number" required>
+      Quantity to match in microunits
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+<ResponseField name="ProposeMatchResult" type="object">
+  <ResponseField name="success" type="boolean">
+    Whether the match succeeded
+  </ResponseField>
+  
+  <ResponseField name="txIds" type="string[]">
+    Transaction IDs
+  </ResponseField>
+  
+  <ResponseField name="confirmedRound" type="number">
+    Confirmed round number
+  </ResponseField>
+</ResponseField>
+
+---
+
+### amendOrder
+
+Amends (edits) an existing unfilled order in-place. Cheaper and faster than cancel + recreate. The escrow contract adjusts collateral automatically — sends you a refund if the new value is lower, or requires extra funds if higher.
+
+**Note:** Only works on orders with zero quantity filled.
+
+```typescript
+const result = await client.amendOrder({
+  marketAppId: 123456789,
+  escrowAppId: 987654321,
+  price: 600_000, // New price: $0.60
+  quantity: 2_000_000, // New quantity: 2 shares
+});
+```
+
+<ParamField path="params" type="AmendOrderParams" required>
+  Amend parameters
+  
+  <Accordion title="AmendOrderParams fields">
+    <ParamField path="marketAppId" type="number" required>
+      The market application ID
+    </ParamField>
+    
+    <ParamField path="escrowAppId" type="number" required>
+      The escrow app ID of the order to amend
+    </ParamField>
+    
+    <ParamField path="price" type="number" required>
+      New price in microunits (e.g., `500000` = $0.50)
+    </ParamField>
+    
+    <ParamField path="quantity" type="number" required>
+      New quantity in microunits
+    </ParamField>
+    
+    <ParamField path="slippage" type="number">
+      New slippage in microunits (default 0)
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+<ResponseField name="AmendOrderResult" type="object">
+  <ResponseField name="success" type="boolean">
+    Whether the amendment succeeded
+  </ResponseField>
+  
+  <ResponseField name="txIds" type="string[]">
+    Transaction IDs
+  </ResponseField>
+  
+  <ResponseField name="confirmedRound" type="number">
+    Confirmed round number
+  </ResponseField>
+</ResponseField>
+
+---
+
+## Position Methods
+
+Methods for managing outcome token positions and claiming resolved markets.
+
+### splitShares
+
+Splits USDC into equal amounts of YES and NO outcome tokens. For example, splitting 1 USDC gives you 1 YES token + 1 NO token. Together they're always worth $1.00 — you can trade them independently.
+
+```typescript
+const result = await client.splitShares({
+  marketAppId: 123456789,
+  amount: 10_000_000, // Split $10.00 USDC
+});
+```
+
+<ParamField path="params" type="SplitSharesParams" required>
+  Split parameters
+  
+  <Accordion title="SplitSharesParams fields">
+    <ParamField path="marketAppId" type="number" required>
+      The market application ID
+    </ParamField>
+    
+    <ParamField path="amount" type="number" required>
+      Amount to split in microunits (e.g., `1000000` = $1.00 USDC)
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+<ResponseField name="SplitMergeResult" type="object">
+  <ResponseField name="success" type="boolean">
+    Whether the operation succeeded
+  </ResponseField>
+  
+  <ResponseField name="txIds" type="string[]">
+    Transaction IDs
+  </ResponseField>
+  
+  <ResponseField name="confirmedRound" type="number">
+    Confirmed round number
+  </ResponseField>
+</ResponseField>
+
+---
+
+### mergeShares
+
+Merges equal amounts of YES and NO tokens back into USDC. The inverse of split. 1 YES + 1 NO = 1 USDC, always.
+
+```typescript
+const result = await client.mergeShares({
+  marketAppId: 123456789,
+  amount: 5_000_000, // Merge 5 YES + 5 NO → $5.00 USDC
+});
+```
+
+<ParamField path="params" type="MergeSharesParams" required>
+  Merge parameters
+  
+  <Accordion title="MergeSharesParams fields">
+    <ParamField path="marketAppId" type="number" required>
+      The market application ID
+    </ParamField>
+    
+    <ParamField path="amount" type="number" required>
+      Amount to merge in microunits
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+<ResponseField name="SplitMergeResult" type="object">
+  <ResponseField name="success" type="boolean">
+    Whether the operation succeeded
+  </ResponseField>
+  
+  <ResponseField name="txIds" type="string[]">
+    Transaction IDs
+  </ResponseField>
+  
+  <ResponseField name="confirmedRound" type="number">
+    Confirmed round number
+  </ResponseField>
+</ResponseField>
+
+---
+
+### claim
+
+Claims USDC from a resolved market by redeeming outcome tokens:
+- **Winning tokens**: redeemed 1:1 for USDC
+- **Voided market**: redeemed at half value
+- **Losing tokens**: burned (no USDC returned)
+
+```typescript
+const result = await client.claim({
+  marketAppId: 123456789,
+  assetId: 456789123, // YES or NO token ASA ID
+  amount: 10_000_000, // Optional: claim 10 tokens (defaults to entire balance)
+});
+
+console.log('Claimed:', result.amountClaimed);
+```
+
+<ParamField path="params" type="ClaimParams" required>
+  Claim parameters
+  
+  <Accordion title="ClaimParams fields">
+    <ParamField path="marketAppId" type="number" required>
+      The market application ID
+    </ParamField>
+    
+    <ParamField path="assetId" type="number" required>
+      The outcome token ASA ID to redeem
+    </ParamField>
+    
+    <ParamField path="amount" type="number">
+      Amount to claim in microunits. If omitted, claims entire balance.
+    </ParamField>
+  </Accordion>
+</ParamField>
+
+<ResponseField name="ClaimResult" type="object">
+  <ResponseField name="success" type="boolean">
+    Whether the claim succeeded
+  </ResponseField>
+  
+  <ResponseField name="txIds" type="string[]">
+    Transaction IDs
+  </ResponseField>
+  
+  <ResponseField name="confirmedRound" type="number">
+    Confirmed round number
+  </ResponseField>
+  
+  <ResponseField name="amountClaimed" type="number">
+    Amount of tokens claimed in microunits
+  </ResponseField>
+</ResponseField>
+
+---
+
+### getPositions
+
+Gets all token positions for a wallet across all markets. Reads on-chain account info and maps ASA holdings to markets. Returns raw token balances (YES/NO amounts per market).
+
+```typescript
+// Get positions for active wallet
+const positions = await client.getPositions();
+
+// Get positions for specific wallet
+const positions = await client.getPositions('WALLETADDRESS...');
+
+positions.forEach(pos => {
+  console.log(`${pos.title}: ${pos.yesBalance} YES, ${pos.noBalance} NO`);
+});
+```
+
+<ParamField path="walletAddress" type="string">
+  Optional wallet address. Defaults to the client's `activeAddress` if not provided.
+</ParamField>
+
+<ResponseField name="WalletPosition[]" type="array">
+  Array of positions with market app IDs and token balances
+  
+  <ResponseField name="marketAppId" type="number">
+    Market application ID
+  </ResponseField>
+  
+  <ResponseField name="title" type="string">
+    Market title (fetched from on-chain global state)
+  </ResponseField>
+  
+  <ResponseField name="yesAssetId" type="number">
+    YES token ASA ID
+  </ResponseField>
+  
+  <ResponseField name="noAssetId" type="number">
+    NO token ASA ID
+  </ResponseField>
+  
+  <ResponseField name="yesBalance" type="number">
+    YES token balance in microunits
+  </ResponseField>
+  
+  <ResponseField name="noBalance" type="number">
+    NO token balance in microunits
+  </ResponseField>
+</ResponseField>
+
+---
+
+## Orderbook Methods
+
+Methods for reading on-chain orderbook data.
+
+### getOrderbook
+
+Fetches the full on-chain orderbook for a market. Reads all escrow apps created by the market contract, decodes their global state, and organizes into yes/no bids and asks. Only includes limit orders (slippage = 0) with unfilled quantity.
+
+```typescript
+const orderbook = await client.getOrderbook(123456789);
+
+console.log('YES bids:', orderbook.yes.bids);
+console.log('YES asks:', orderbook.yes.asks);
+console.log('NO bids:', orderbook.no.bids);
+console.log('NO asks:', orderbook.no.asks);
+```
+
+<ParamField path="marketAppId" type="number" required>
+  The market application ID
+</ParamField>
+
+<ResponseField name="Orderbook" type="object">
+  <ResponseField name="yes" type="OrderbookSide">
+    YES side of the orderbook
+    
+    <ResponseField name="bids" type="OrderbookEntry[]">
+      Buy orders for YES tokens
+    </ResponseField>
+    
+    <ResponseField name="asks" type="OrderbookEntry[]">
+      Sell orders for YES tokens
+    </ResponseField>
+  </ResponseField>
+  
+  <ResponseField name="no" type="OrderbookSide">
+    NO side of the orderbook
+    
+    <ResponseField name="bids" type="OrderbookEntry[]">
+      Buy orders for NO tokens
+    </ResponseField>
+    
+    <ResponseField name="asks" type="OrderbookEntry[]">
+      Sell orders for NO tokens
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+---
+
+### getOpenOrders
+
+Gets open orders for a specific wallet on a market.
+
+```typescript
+const orders = await client.getOpenOrders(123456789);
+// Or for a specific wallet:
+const orders = await client.getOpenOrders(123456789, 'WALLETADDRESS...');
+
+orders.forEach(order => {
+  console.log(`Order ${order.escrowAppId}: ${order.quantity} @ ${order.price}`);
+});
+```
+
+<ParamField path="marketAppId" type="number" required>
+  The market application ID
+</ParamField>
+
+<ParamField path="walletAddress" type="string">
+  Optional wallet address. Defaults to the client's `activeAddress` if not provided.
+</ParamField>
+
+<ResponseField name="OpenOrder[]" type="array">
+  Array of open orders
+  
+  <ResponseField name="escrowAppId" type="number">
+    Escrow app ID
+  </ResponseField>
+  
+  <ResponseField name="marketAppId" type="number">
+    Market app ID
+  </ResponseField>
+  
+  <ResponseField name="position" type="0 | 1">
+    Position: 0=No, 1=Yes
+  </ResponseField>
+  
+  <ResponseField name="side" type="number">
+    Side: 0=Sell, 1=Buy
+  </ResponseField>
+  
+  <ResponseField name="price" type="number">
+    Price in microunits
+  </ResponseField>
+  
+  <ResponseField name="quantity" type="number">
+    Total quantity in microunits
+  </ResponseField>
+  
+  <ResponseField name="quantityFilled" type="number">
+    Filled quantity in microunits
+  </ResponseField>
+  
+  <ResponseField name="slippage" type="number">
+    Slippage in microunits (0 = limit order)
+  </ResponseField>
+  
+  <ResponseField name="owner" type="string">
+    Owner address
+  </ResponseField>
+</ResponseField>
+
+---
+
+### getWalletOrdersFromApi
+
+Gets all open orders for a wallet across every live market using the Alpha REST API.
+
+```typescript
+const allOrders = await client.getWalletOrdersFromApi('WALLETADDRESS...');
+```
+
+<ParamField path="walletAddress" type="string" required>
+  The wallet address
+</ParamField>
+
+<ResponseField name="OpenOrder[]" type="array">
+  Array of open orders for the wallet across all markets
+</ResponseField>
+
+---
+
+## Market Methods
+
+Methods for fetching market information from the Alpha API or directly from the blockchain.
+
+### getLiveMarkets
+
+Fetches all live, tradeable markets.
+
+- If an API key is configured, uses the Alpha REST API (richer data: images, categories, volume)
+- Otherwise, discovers markets on-chain from the market creator address (no API key needed)
+
+```typescript
+const markets = await client.getLiveMarkets();
+
+markets.forEach(market => {
+  console.log(`${market.title}: ${market.yesProb}% YES`);
+});
+```
+
+<ResponseField name="Market[]" type="array">
+  Array of live markets
+  
+  <ResponseField name="id" type="string">
+    Market ID (app ID as string for on-chain, UUID for API)
+  </ResponseField>
+  
+  <ResponseField name="title" type="string">
+    Market title
+  </ResponseField>
+  
+  <ResponseField name="marketAppId" type="number">
+    Market application ID on Algorand
+  </ResponseField>
+  
+  <ResponseField name="yesAssetId" type="number">
+    YES token ASA ID
+  </ResponseField>
+  
+  <ResponseField name="noAssetId" type="number">
+    NO token ASA ID
+  </ResponseField>
+  
+  <ResponseField name="yesProb" type="number">
+    YES probability (API only)
+  </ResponseField>
+  
+  <ResponseField name="noProb" type="number">
+    NO probability (API only)
+  </ResponseField>
+  
+  <ResponseField name="volume" type="number">
+    Trading volume (API only)
+  </ResponseField>
+  
+  <ResponseField name="endTs" type="number">
+    End/resolution timestamp in seconds
+  </ResponseField>
+  
+  <ResponseField name="image" type="string">
+    Market image URL (API only)
+  </ResponseField>
+  
+  <ResponseField name="categories" type="string[]">
+    Market categories (API only)
+  </ResponseField>
+</ResponseField>
+
+---
+
+### getMarket
+
+Fetches a single market by its ID.
+
+- If an API key is configured, uses the Alpha REST API
+- Otherwise, reads the market's on-chain global state (pass the market app ID as a string)
+
+```typescript
+// Using API (UUID)
+const market = await client.getMarket('uuid-here');
+
+// Using on-chain (app ID as string)
+const market = await client.getMarket('123456789');
+```
+
+<ParamField path="marketId" type="string" required>
+  The market ID (UUID for API, app ID string for on-chain)
+</ParamField>
+
+<ResponseField name="Market | null" type="object">
+  The market data, or null if not found
+</ResponseField>
+
+---
+
+### getMarketsOnChain
+
+Fetches all live markets directly from the blockchain (no API key needed). Discovers markets by looking up all apps created by the market creator address.
+
+Returns core data: title, asset IDs, resolution time, fees. Does NOT include images, categories, volume, or probabilities.
+
+```typescript
+const markets = await client.getMarketsOnChain();
+```
+
+<ResponseField name="Market[]" type="array">
+  Array of live markets from on-chain data
+</ResponseField>
+
+---
+
+### getMarketOnChain
+
+Fetches a single market by app ID directly from the blockchain (no API key needed).
+
+```typescript
+const market = await client.getMarketOnChain(123456789);
+```
+
+<ParamField path="marketAppId" type="number" required>
+  The market application ID
+</ParamField>
+
+<ResponseField name="Market | null" type="object">
+  The market data, or null if not found
+</ResponseField>
+
+---
+
+### getLiveMarketsFromApi
+
+Fetches all live markets from the Alpha REST API (requires API key). Returns richer data than on-chain: images, categories, volume, probabilities.
+
+```typescript
+const markets = await client.getLiveMarketsFromApi();
+```
+
+<ResponseField name="Market[]" type="array">
+  Array of live markets from the API
+</ResponseField>
+
+---
+
+### getRewardMarkets
+
+Fetches the reward markets from the Alpha REST API (requires API key).
+
+```typescript
+const rewardMarkets = await client.getRewardMarkets();
+```
+
+<ResponseField name="Market[]" type="array">
+  Array of reward markets
+</ResponseField>
+
+---
+
+### getMarketFromApi
+
+Fetches a single market by ID from the Alpha REST API (requires API key).
+
+```typescript
+const market = await client.getMarketFromApi('market-uuid');
+```
+
+<ParamField path="marketId" type="string" required>
+  The market UUID
+</ParamField>
+
+<ResponseField name="Market | null" type="object">
+  The market data, or null if not found
+</ResponseField>

@@ -1,0 +1,281 @@
+---
+title: "Reward Markets"
+description: "Fetch markets offering liquidity rewards"
+---
+
+## Overview
+
+Reward markets offer liquidity incentives to market makers who provide tight spreads. The `getRewardMarkets()` method fetches all live markets with active liquidity reward programs.
+
+**Requirements:**
+- Requires API key (get one from [Alpha Arcade Account page](https://alphaarcade.com/account))
+- Returns only markets with `totalRewards > 0`
+
+---
+
+## getRewardMarkets
+
+Fetches all markets with active liquidity reward programs.
+
+```typescript
+const client = new AlphaClient({
+  // ... other config
+  apiKey: process.env.ALPHA_API_KEY, // Required
+});
+
+const rewardMarkets = await client.getRewardMarkets();
+
+rewardMarkets.forEach(market => {
+  console.log(`Market: ${market.title}`);
+  console.log(`  Total Rewards: $${market.totalRewards! / 1e6}`);
+  console.log(`  Paid Out: $${market.rewardsPaidOut! / 1e6}`);
+  console.log(`  Remaining: $${(market.totalRewards! - market.rewardsPaidOut!) / 1e6}`);
+});
+```
+
+### Returns
+
+<ResponseField name="markets" type="Market[]">
+  Array of markets with liquidity rewards
+
+  <Expandable title="Market object (with reward fields)">
+    <ResponseField name="id" type="string" required>
+      Market UUID
+    </ResponseField>
+    
+    <ResponseField name="title" type="string" required>
+      Market question or title
+    </ResponseField>
+    
+    <ResponseField name="marketAppId" type="number" required>
+      Algorand application ID
+    </ResponseField>
+    
+    <ResponseField name="totalRewards" type="number" required>
+      Total reward pool in microunits (e.g. 1000000 = $1.00 USDC)
+    </ResponseField>
+    
+    <ResponseField name="rewardsPaidOut" type="number" required>
+      Amount already distributed in microunits
+    </ResponseField>
+    
+    <ResponseField name="rewardsSpreadDistance" type="number" required>
+      Maximum spread distance to qualify for rewards in microunits (e.g. 50000 = $0.05)
+      
+      Orders must be within this distance from the mid-price to earn rewards.
+    </ResponseField>
+    
+    <ResponseField name="rewardsMinContracts" type="number" required>
+      Minimum order size to qualify for rewards in microunits (e.g. 1000000 = 1 share)
+    </ResponseField>
+    
+    <ResponseField name="lastRewardAmount" type="number">
+      Most recent reward payout in microunits
+    </ResponseField>
+    
+    <ResponseField name="lastRewardTs" type="number">
+      Timestamp of last reward payout (Unix epoch milliseconds)
+    </ResponseField>
+    
+    <ResponseField name="yesAssetId" type="number" required>
+      YES outcome token ASA ID
+    </ResponseField>
+    
+    <ResponseField name="noAssetId" type="number" required>
+      NO outcome token ASA ID
+    </ResponseField>
+    
+    <ResponseField name="endTs" type="number" required>
+      Resolution timestamp in seconds
+    </ResponseField>
+    
+    <ResponseField name="yesProb" type="number">
+      Current YES probability
+    </ResponseField>
+    
+    <ResponseField name="noProb" type="number">
+      Current NO probability
+    </ResponseField>
+    
+    <ResponseField name="volume" type="number">
+      Total trading volume in microunits
+    </ResponseField>
+    
+    <ResponseField name="image" type="string">
+      Market image URL
+    </ResponseField>
+    
+    <ResponseField name="categories" type="string[]">
+      Market categories
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Example: Full Reward Market Display
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const client = new AlphaClient({
+  algodClient: new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443),
+  indexerClient: new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443),
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+  apiKey: process.env.ALPHA_API_KEY!,
+});
+
+const rewardMarkets = await client.getRewardMarkets();
+
+for (const market of rewardMarkets) {
+  console.log(`Market: ${market.title} (App ID: ${market.marketAppId})`);
+  console.log(`  Total Rewards: $${market.totalRewards! / 1e6}`);
+  console.log(`  Rewards Paid Out: $${market.rewardsPaidOut! / 1e6}`);
+  console.log(`  Max Spread Distance: ${market.rewardsSpreadDistance! / 1e6}`);
+  console.log(`  Min Order Size: ${market.rewardsMinContracts! / 1e6} shares`);
+  console.log(`  Last Reward: $${market.lastRewardAmount! / 1e6}`);
+  console.log(`  Last Reward Time: ${new Date(market.lastRewardTs!).toISOString()}`);
+  console.log();
+}
+```
+
+**Output:**
+```
+Market: Will Bitcoin hit $100k in 2025? (App ID: 1234567890)
+  Total Rewards: $500
+  Rewards Paid Out: $125
+  Max Spread Distance: 0.05
+  Min Order Size: 1 shares
+  Last Reward: $5
+  Last Reward Time: 2026-03-11T10:30:00.000Z
+```
+
+---
+
+## Liquidity Reward Fields
+
+### totalRewards
+
+The total USDC allocated for liquidity rewards on this market.
+
+```typescript
+const remaining = market.totalRewards! - market.rewardsPaidOut!;
+console.log(`Remaining rewards: $${remaining / 1e6}`);
+```
+
+### rewardsSpreadDistance
+
+Maximum spread from mid-price to qualify for rewards.
+
+For example, if `rewardsSpreadDistance = 50000` ($0.05):
+- Mid-price is $0.50
+- Qualifying bids: $0.45 - $0.50
+- Qualifying asks: $0.50 - $0.55
+
+```typescript
+const maxSpread = market.rewardsSpreadDistance! / 1e6;
+console.log(`Max qualifying spread: $${maxSpread}`);
+```
+
+### rewardsMinContracts
+
+Minimum order size (in microunits) to qualify for rewards.
+
+```typescript
+const minShares = market.rewardsMinContracts! / 1e6;
+console.log(`Minimum order size: ${minShares} shares`);
+```
+
+### lastRewardAmount & lastRewardTs
+
+Most recent reward payout details.
+
+```typescript
+if (market.lastRewardAmount && market.lastRewardTs) {
+  console.log(`Last payout: $${market.lastRewardAmount / 1e6}`);
+  console.log(`At: ${new Date(market.lastRewardTs).toISOString()}`);
+}
+```
+
+---
+
+## Earning Rewards
+
+To earn liquidity rewards:
+
+1. **Place qualifying orders** on reward markets:
+   - Order size ≥ `rewardsMinContracts`
+   - Spread ≤ `rewardsSpreadDistance` from mid-price
+   - Limit orders (slippage = 0)
+
+2. **Maintain tight spreads** to maximize reward frequency
+
+3. **Monitor `lastRewardTs`** to track payout frequency
+
+```typescript
+// Example: Place a qualifying limit order
+const market = rewardMarkets[0];
+
+const result = await client.createLimitOrder({
+  marketAppId: market.marketAppId,
+  position: 1, // YES
+  price: 500_000, // $0.50
+  quantity: market.rewardsMinContracts!, // Meet minimum
+  isBuying: true,
+});
+
+console.log(`Order placed: ${result.escrowAppId}`);
+console.log('Eligible for liquidity rewards!');
+```
+
+---
+
+## Filtering by Reward Amount
+
+Find markets with the highest remaining rewards:
+
+```typescript
+const rewardMarkets = await client.getRewardMarkets();
+
+// Sort by remaining rewards (descending)
+const sortedByRewards = rewardMarkets
+  .map(m => ({
+    ...m,
+    remaining: (m.totalRewards! - m.rewardsPaidOut!) / 1e6,
+  }))
+  .sort((a, b) => b.remaining - a.remaining);
+
+console.log('Top 5 markets by remaining rewards:');
+sortedByRewards.slice(0, 5).forEach((m, i) => {
+  console.log(`${i + 1}. ${m.title} - $${m.remaining}`);
+});
+```
+
+---
+
+## Error Handling
+
+```typescript
+try {
+  const rewardMarkets = await client.getRewardMarkets();
+  console.log(`Found ${rewardMarkets.length} reward markets`);
+} catch (error) {
+  if (error.message.includes('apiKey is required')) {
+    console.error('API key missing. Get one from Alpha Arcade Account page.');
+  } else {
+    console.error('Failed to fetch reward markets:', error);
+  }
+}
+```
+
+---
+
+## Related
+
+- [Get Markets](/api/markets/get-markets) - General market fetching methods
+- [Create Limit Order](/api/trading/limit-orders) - Place qualifying orders
+- [AlphaClient](/api/client) - API key configuration

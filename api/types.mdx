@@ -1,0 +1,753 @@
+---
+title: Types
+description: Complete TypeScript type reference for the Alpha SDK
+---
+
+This page documents all TypeScript types exported by the Alpha SDK. Types are organized by category for easy reference.
+
+## Client Configuration Types
+
+<Accordion title="AlphaClientConfig">
+
+Configuration object for initializing the `AlphaClient`.
+
+```typescript
+type AlphaClientConfig = {
+  /** Algorand algod client instance */
+  algodClient: Algodv2;
+  /** Algorand indexer client instance */
+  indexerClient: Indexer;
+  /** Transaction signer (wallet or account signer) */
+  signer: TransactionSigner;
+  /** The active Algorand address that will sign transactions */
+  activeAddress: string;
+  /** Matcher contract app ID (mainnet: 3078581851) */
+  matcherAppId: number;
+  /** USDC ASA ID on Algorand (mainnet: 31566704) */
+  usdcAssetId: number;
+  /** Base URL for the Alpha REST API (default: https://partners.alphaarcade.com/api) */
+  apiBaseUrl?: string;
+  /** API key for the Alpha partners API. Optional -- if not provided, markets are loaded on-chain. */
+  apiKey?: string;
+  /** Market creator address for on-chain market discovery. Defaults to the Alpha Arcade mainnet creator. */
+  marketCreatorAddress?: string;
+};
+```
+
+**Used by:** [Client initialization](/api/client#constructor)
+
+**Key fields:**
+- `algodClient` and `indexerClient`: Algorand SDK clients for interacting with the blockchain
+- `signer`: Wallet or account that signs transactions
+- `activeAddress`: The address that will execute trades and operations
+- `matcherAppId`: The Alpha matcher smart contract app ID
+- `usdcAssetId`: The USDC asset ID on Algorand
+- `apiKey`: Optional API key for enhanced market data (probabilities, volume)
+
+</Accordion>
+
+## Market Types
+
+<Accordion title="Market">
+
+Represents a prediction market, either fetched from the Alpha API or discovered on-chain.
+
+```typescript
+type Market = {
+  /** Market ID (app ID as string for on-chain, UUID for API) */
+  id: string;
+  title: string;
+  slug?: string;
+  image?: string;
+  marketAppId: number;
+  yesAssetId: number;
+  noAssetId: number;
+  /** YES probability (API only -- not available from on-chain lookup) */
+  yesProb?: number;
+  /** NO probability (API only -- not available from on-chain lookup) */
+  noProb?: number;
+  /** Trading volume (API only -- not available from on-chain lookup) */
+  volume?: number;
+  /** End/resolution timestamp in seconds */
+  endTs: number;
+  resolution?: number;
+  isResolved?: boolean;
+  isLive?: boolean;
+  categories?: string[];
+  featured?: boolean;
+  options?: MarketOption[];
+  feeBase?: number;
+  /** Liquidty Rewards Info */
+  totalRewards?: number;
+  rewardsPaidOut?: number;
+  rewardsSpreadDistance?: number;
+  rewardsMinContracts?: number;
+  lastRewardAmount?: number;
+  lastRewardTs?: number;
+  /** Data source: 'onchain' or 'api' */
+  source?: 'onchain' | 'api';
+  [key: string]: unknown;
+};
+```
+
+**Used by:** [getMarkets()](/api/client#getmarkets), [getMarket()](/api/client#getmarket)
+
+**Key fields:**
+- `marketAppId`: The smart contract app ID for this market (required for all trading operations)
+- `yesAssetId` / `noAssetId`: Algorand ASA IDs for YES and NO outcome tokens
+- `yesProb` / `noProb`: Current market probabilities (only available when using API)
+- `source`: Indicates whether data came from the Alpha API or on-chain discovery
+
+</Accordion>
+
+<Accordion title="MarketOption">
+
+Represents an option within a multi-choice prediction market.
+
+```typescript
+type MarketOption = {
+  id: string;
+  title: string;
+  marketAppId: number;
+  yesAssetId: number;
+  noAssetId: number;
+  yesProb: number;
+  noProb: number;
+  [key: string]: unknown;
+};
+```
+
+**Used by:** Multi-choice markets in the `Market` type's `options` array
+
+Each option in a multi-choice market has its own market app ID and asset IDs for trading.
+
+</Accordion>
+
+<Accordion title="MarketGlobalState">
+
+Raw global state of a market smart contract as read from the Algorand blockchain.
+
+```typescript
+type MarketGlobalState = {
+  collateral_asset_id: number;
+  yes_asset_id: number;
+  no_asset_id: number;
+  yes_supply: number;
+  no_supply: number;
+  is_resolved: number;
+  is_activated: number;
+  outcome: number;
+  resolution_time: number;
+  fee_base_percent: number;
+  fee_timer_threshold: number;
+  title: string;
+  rules: string;
+  oracle_address: string;
+  fee_address: string;
+  market_friend_addr: string;
+  escrow_cancel_address: string;
+};
+```
+
+**Used by:** Internal SDK methods that read on-chain market state
+
+This type reflects the raw smart contract global state. Most developers will work with the higher-level `Market` type instead.
+
+</Accordion>
+
+## Order Types
+
+<Accordion title="Position">
+
+Enum-like type representing which side of the market to trade.
+
+```typescript
+type Position = 0 | 1;
+```
+
+**Values:**
+- `0`: NO position
+- `1`: YES position
+
+**Used by:** All order creation and trading methods
+
+</Accordion>
+
+<Accordion title="OrderSide">
+
+The side of an order.
+
+```typescript
+type OrderSide = 'BUY' | 'SELL';
+```
+
+**Values:**
+- `'BUY'`: Buying outcome tokens
+- `'SELL'`: Selling outcome tokens
+
+</Accordion>
+
+<Accordion title="CreateLimitOrderParams">
+
+Parameters for creating a limit order.
+
+```typescript
+type CreateLimitOrderParams = {
+  /** Market app ID */
+  marketAppId: number;
+  /** 1 for Yes, 0 for No */
+  position: Position;
+  /** Price in microunits (e.g. 500000 = $0.50) */
+  price: number;
+  /** Quantity in microunits (e.g. 1000000 = 1 share) */
+  quantity: number;
+  /** Whether this is a buy order */
+  isBuying: boolean;
+  /** Fee base in microunits (e.g. 70000 = 7%). If omitted, reads from market global state. */
+  feeBase?: number;
+};
+```
+
+**Used by:** [createLimitOrder()](/api/orders#createlimitorder)
+
+**Key fields:**
+- `price`: Limit price in microunits (1,000,000 = $1.00)
+- `quantity`: Number of shares in microunits
+- `isBuying`: `true` for buy orders, `false` for sell orders
+- `feeBase`: Optional fee override (auto-fetched from market if not provided)
+
+</Accordion>
+
+<Accordion title="CreateMarketOrderParams">
+
+Parameters for creating a market order that executes immediately against the orderbook.
+
+```typescript
+type CreateMarketOrderParams = {
+  /** Market app ID */
+  marketAppId: number;
+  /** 1 for Yes, 0 for No */
+  position: Position;
+  /** Price in microunits (e.g. 500000 = $0.50) */
+  price: number;
+  /** Quantity in microunits (e.g. 1000000 = 1 share) */
+  quantity: number;
+  /** Whether this is a buy order */
+  isBuying: boolean;
+  /** Slippage tolerance in microunits (e.g. 50000 = $0.05) */
+  slippage: number;
+  /** Fee base in microunits. If omitted, reads from market global state. */
+  feeBase?: number;
+  /** Pre-computed matching orders. If omitted, auto-fetches orderbook and computes matches. */
+  matchingOrders?: CounterpartyMatch[];
+};
+```
+
+**Used by:** [createMarketOrder()](/api/orders#createmarketorder)
+
+**Key fields:**
+- `slippage`: Maximum acceptable price movement (in microunits)
+- `matchingOrders`: Optional pre-computed matches for advanced use cases
+- All price and quantity values are in microunits (1,000,000 = 1.00)
+
+</Accordion>
+
+<Accordion title="CancelOrderParams">
+
+Parameters for cancelling an existing order.
+
+```typescript
+type CancelOrderParams = {
+  /** Market app ID */
+  marketAppId: number;
+  /** The escrow app ID of the order to cancel */
+  escrowAppId: number;
+  /** The owner address of the order */
+  orderOwner: string;
+};
+```
+
+**Used by:** [cancelOrder()](/api/orders#cancelorder)
+
+**Key fields:**
+- `escrowAppId`: The unique escrow contract ID for the order (returned when order was created)
+- `orderOwner`: Must match the address that created the order
+
+</Accordion>
+
+<Accordion title="ProposeMatchParams">
+
+Parameters for manually proposing a match between two existing orders.
+
+```typescript
+type ProposeMatchParams = {
+  /** Market app ID */
+  marketAppId: number;
+  /** The maker escrow app ID (existing order) */
+  makerEscrowAppId: number;
+  /** The maker's Algorand address */
+  makerAddress: string;
+  /** Quantity to match in microunits */
+  quantityMatched: number;
+};
+```
+
+**Used by:** [proposeMatch()](/api/orders#proposematch)
+
+This is an advanced method for manually matching orders. Most developers should use market orders instead.
+
+</Accordion>
+
+<Accordion title="AmendOrderParams">
+
+Parameters for amending (editing) an existing unfilled order.
+
+```typescript
+type AmendOrderParams = {
+  /** Market app ID */
+  marketAppId: number;
+  /** The escrow app ID of the order to amend */
+  escrowAppId: number;
+  /** New price in microunits (e.g. 500000 = $0.50) */
+  price: number;
+  /** New quantity in microunits (e.g. 1000000 = 1 share) */
+  quantity: number;
+  /** New slippage in microunits (default 0) */
+  slippage?: number;
+};
+```
+
+**Used by:** [amendOrder()](/api/orders#amendorder)
+
+Allows changing the price, quantity, or slippage of an existing order without cancelling and recreating it.
+
+</Accordion>
+
+<Accordion title="CounterpartyMatch">
+
+Represents a counterparty order that can be matched against.
+
+```typescript
+type CounterpartyMatch = {
+  /** Escrow app ID of the counterparty order */
+  escrowAppId: number;
+  /** Quantity available to match in microunits */
+  quantity: number;
+  /** Owner address of the counterparty order */
+  owner: string;
+  /** Effective fill price in microunits (accounts for complementary matching, e.g. 1_000_000 - noPrice for YES buys) */
+  price?: number;
+};
+```
+
+**Used by:** Internal order matching logic and `CreateMarketOrderParams.matchingOrders`
+
+The SDK automatically computes counterparty matches when creating market orders.
+
+</Accordion>
+
+<Accordion title="CreateOrderResult">
+
+Result returned after successfully creating an order.
+
+```typescript
+type CreateOrderResult = {
+  /** The escrow app ID of the newly created order */
+  escrowAppId: number;
+  /** Transaction IDs from the atomic group */
+  txIds: string[];
+  /** Confirmed round number */
+  confirmedRound: number;
+  /** Total quantity that was matched */
+  matchedQuantity?: number;
+  /** Weighted average fill price in microunits (accounts for complementary matching) */
+  matchedPrice?: number;
+};
+```
+
+**Returned by:** [createLimitOrder()](/api/orders#createlimitorder), [createMarketOrder()](/api/orders#createmarketorder)
+
+**Key fields:**
+- `escrowAppId`: Save this to cancel or amend the order later
+- `matchedQuantity`: How much was immediately filled (for market orders or matched limit orders)
+- `matchedPrice`: The effective execution price
+
+</Accordion>
+
+<Accordion title="CancelOrderResult">
+
+Result returned after cancelling an order.
+
+```typescript
+type CancelOrderResult = {
+  /** Whether the cancellation succeeded */
+  success: boolean;
+  /** Transaction IDs */
+  txIds: string[];
+  /** Confirmed round number */
+  confirmedRound: number;
+};
+```
+
+**Returned by:** [cancelOrder()](/api/orders#cancelorder)
+
+</Accordion>
+
+<Accordion title="ProposeMatchResult">
+
+Result returned after proposing a match.
+
+```typescript
+type ProposeMatchResult = {
+  /** Whether the match succeeded */
+  success: boolean;
+  /** Transaction IDs */
+  txIds: string[];
+  /** Confirmed round number */
+  confirmedRound: number;
+};
+```
+
+**Returned by:** [proposeMatch()](/api/orders#proposematch)
+
+</Accordion>
+
+<Accordion title="AmendOrderResult">
+
+Result returned after amending an order.
+
+```typescript
+type AmendOrderResult = {
+  /** Whether the amendment succeeded */
+  success: boolean;
+  /** Transaction IDs */
+  txIds: string[];
+  /** Confirmed round number */
+  confirmedRound: number;
+};
+```
+
+**Returned by:** [amendOrder()](/api/orders#amendorder)
+
+</Accordion>
+
+## Orderbook Types
+
+<Accordion title="OrderbookEntry">
+
+A single order entry in the orderbook.
+
+```typescript
+type OrderbookEntry = {
+  /** Price in microunits (e.g. 500000 = $0.50) */
+  price: number;
+  /** Remaining quantity in microunits */
+  quantity: number;
+  /** Escrow app ID for this order */
+  escrowAppId: number;
+  /** Owner address */
+  owner: string;
+};
+```
+
+**Used by:** `OrderbookSide` and [getOrderbook()](/api/orderbook#getorderbook)
+
+Represents a single resting order at a specific price level.
+
+</Accordion>
+
+<Accordion title="OrderbookSide">
+
+One side of the orderbook (bids or asks).
+
+```typescript
+type OrderbookSide = {
+  bids: OrderbookEntry[];
+  asks: OrderbookEntry[];
+};
+```
+
+**Used by:** `Orderbook` type
+
+- `bids`: Buy orders (sorted descending by price)
+- `asks`: Sell orders (sorted ascending by price)
+
+</Accordion>
+
+<Accordion title="Orderbook">
+
+Complete orderbook for a market, with both YES and NO positions.
+
+```typescript
+type Orderbook = {
+  yes: OrderbookSide;
+  no: OrderbookSide;
+};
+```
+
+**Returned by:** [getOrderbook()](/api/orderbook#getorderbook)
+
+Contains the full order book with separate sides for YES and NO outcome tokens.
+
+</Accordion>
+
+<Accordion title="AggregatedOrderbookEntry">
+
+An aggregated orderbook entry combining multiple orders at the same price level.
+
+```typescript
+type AggregatedOrderbookEntry = {
+  /** Price in microunits */
+  price: number;
+  /** Total quantity at this price level in microunits */
+  quantity: number;
+  /** Number of orders at this price level */
+  orderCount: number;
+};
+```
+
+**Used by:** `AggregatedOrderbookSide`
+
+Useful for UI displays that show total liquidity at each price level.
+
+</Accordion>
+
+<Accordion title="AggregatedOrderbookSide">
+
+One side of an aggregated orderbook.
+
+```typescript
+type AggregatedOrderbookSide = {
+  bids: AggregatedOrderbookEntry[];
+  asks: AggregatedOrderbookEntry[];
+};
+```
+
+**Used by:** `AggregatedOrderbook` type
+
+</Accordion>
+
+<Accordion title="AggregatedOrderbook">
+
+Aggregated orderbook for display purposes, combining orders at the same price level.
+
+```typescript
+type AggregatedOrderbook = {
+  yes: AggregatedOrderbookSide;
+  no: AggregatedOrderbookSide;
+};
+```
+
+**Returned by:** [getAggregatedOrderbook()](/api/orderbook#getaggregatedorderbook)
+
+Provides a simplified view of liquidity for UI rendering.
+
+</Accordion>
+
+## Position Types
+
+<Accordion title="SplitSharesParams">
+
+Parameters for splitting USDC into YES and NO shares.
+
+```typescript
+type SplitSharesParams = {
+  /** Market app ID */
+  marketAppId: number;
+  /** Amount to split in microunits (e.g. 1000000 = $1.00 USDC) */
+  amount: number;
+};
+```
+
+**Used by:** [splitShares()](/api/positions#splitshares)
+
+Converts USDC into equal amounts of YES and NO outcome tokens.
+
+</Accordion>
+
+<Accordion title="MergeSharesParams">
+
+Parameters for merging matching YES and NO shares back into USDC.
+
+```typescript
+type MergeSharesParams = {
+  /** Market app ID */
+  marketAppId: number;
+  /** Amount to merge in microunits */
+  amount: number;
+};
+```
+
+**Used by:** [mergeShares()](/api/positions#mergeshares)
+
+Burns equal amounts of YES and NO tokens to recover USDC.
+
+</Accordion>
+
+<Accordion title="ClaimParams">
+
+Parameters for claiming resolved tokens and redeeming them for USDC.
+
+```typescript
+type ClaimParams = {
+  /** Market app ID */
+  marketAppId: number;
+  /** The outcome token ASA ID to redeem */
+  assetId: number;
+  /** Amount to claim in microunits. If omitted, claims entire balance. */
+  amount?: number;
+};
+```
+
+**Used by:** [claim()](/api/positions#claim)
+
+After a market resolves, holders of the winning outcome token can claim USDC at 1:1 ratio.
+
+</Accordion>
+
+<Accordion title="SplitMergeResult">
+
+Result returned after splitting or merging shares.
+
+```typescript
+type SplitMergeResult = {
+  success: boolean;
+  txIds: string[];
+  confirmedRound: number;
+};
+```
+
+**Returned by:** [splitShares()](/api/positions#splitshares), [mergeShares()](/api/positions#mergeshares)
+
+</Accordion>
+
+<Accordion title="ClaimResult">
+
+Result returned after claiming resolved tokens.
+
+```typescript
+type ClaimResult = {
+  success: boolean;
+  txIds: string[];
+  confirmedRound: number;
+  /** Amount of tokens claimed in microunits */
+  amountClaimed: number;
+};
+```
+
+**Returned by:** [claim()](/api/positions#claim)
+
+**Key fields:**
+- `amountClaimed`: The amount of USDC returned to the wallet
+
+</Accordion>
+
+<Accordion title="WalletPosition">
+
+Represents a wallet's token holdings in a specific market.
+
+```typescript
+type WalletPosition = {
+  /** Market app ID */
+  marketAppId: number;
+  /** Market title (fetched from on-chain global state) */
+  title: string;
+  /** YES token ASA ID */
+  yesAssetId: number;
+  /** NO token ASA ID */
+  noAssetId: number;
+  /** YES token balance in microunits */
+  yesBalance: number;
+  /** NO token balance in microunits */
+  noBalance: number;
+};
+```
+
+**Returned by:** [getWalletPositions()](/api/positions#getwalletpositions)
+
+Shows the current holdings of YES and NO tokens for a specific market.
+
+</Accordion>
+
+<Accordion title="OpenOrder">
+
+Represents an open (unfilled or partially filled) order belonging to a wallet.
+
+```typescript
+type OpenOrder = {
+  /** Escrow app ID */
+  escrowAppId: number;
+  /** Market app ID */
+  marketAppId: number;
+  /** Position: 0=No, 1=Yes */
+  position: Position;
+  /** Side: 0=Sell, 1=Buy */
+  side: number;
+  /** Price in microunits */
+  price: number;
+  /** Total quantity in microunits */
+  quantity: number;
+  /** Filled quantity in microunits */
+  quantityFilled: number;
+  /** Slippage in microunits (0 = limit order) */
+  slippage: number;
+  /** Owner address */
+  owner: string;
+};
+```
+
+**Returned by:** [getOpenOrders()](/api/positions#getopenorders)
+
+**Key fields:**
+- `escrowAppId`: Use this to cancel or amend the order
+- `quantityFilled`: How much has been matched so far
+- Remaining quantity = `quantity - quantityFilled`
+
+</Accordion>
+
+## Escrow Types
+
+<Accordion title="EscrowGlobalState">
+
+Raw global state of an escrow smart contract as read from the blockchain.
+
+```typescript
+type EscrowGlobalState = {
+  position?: number;
+  side?: number;
+  price?: number;
+  quantity?: number;
+  quantity_filled?: number;
+  slippage?: number;
+  owner?: string;
+  market_app_id?: number;
+  asset_listed?: number;
+  fee_timer_start?: number;
+};
+```
+
+**Used by:** Internal SDK methods that read order state from escrow contracts
+
+This is the raw smart contract state. Most developers will work with the higher-level `OpenOrder` type instead.
+
+</Accordion>
+
+## Microunits
+
+Most numeric values in the SDK use **microunits** (1,000,000 = 1.00).
+
+**Examples:**
+- Price of $0.50 = `500000` microunits
+- 5 shares = `5000000` microunits  
+- 2% fee = `20000` microunits
+
+**Helper functions:**
+```typescript
+// Convert to microunits
+const price = 0.65 * 1_000_000; // 650000
+
+// Convert from microunits
+const displayPrice = price / 1_000_000; // 0.65
+```
+
+Always use microunits when calling SDK methods. The SDK does not perform automatic conversions.

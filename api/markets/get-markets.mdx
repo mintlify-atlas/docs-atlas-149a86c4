@@ -1,0 +1,335 @@
+---
+title: "Get Markets"
+description: "Fetch prediction markets from the Alpha API or on-chain"
+---
+
+## Overview
+
+The Alpha SDK provides multiple methods to discover and fetch prediction markets:
+
+- **`getLiveMarkets()`** - Smart default that uses API if key is configured, otherwise on-chain
+- **`getMarket(marketId)`** - Fetch a single market by ID (API or on-chain)
+- **`getMarketsOnChain()`** - Direct on-chain discovery (no API key needed)
+- **`getMarketOnChain(marketAppId)`** - Fetch single market from blockchain
+
+See [On-Chain vs API Comparison](/api/markets/on-chain-vs-api) for guidance on which method to use.
+
+---
+
+## getLiveMarkets
+
+Fetches all live, tradeable markets using the best available data source.
+
+**Behavior:**
+- If `apiKey` is configured → uses Alpha REST API (richer data)
+- If no `apiKey` → falls back to on-chain discovery
+
+```typescript
+const markets = await client.getLiveMarkets();
+
+console.log(`Found ${markets.length} live markets`);
+markets.forEach(m => {
+  console.log(`${m.title} - App ID: ${m.marketAppId}`);
+});
+```
+
+### Returns
+
+<ResponseField name="markets" type="Market[]">
+  Array of live prediction markets
+
+  <Expandable title="Market object">
+    <ResponseField name="id" type="string" required>
+      Market ID (UUID from API, or app ID string from on-chain)
+    </ResponseField>
+    
+    <ResponseField name="title" type="string" required>
+      Market question or title
+    </ResponseField>
+    
+    <ResponseField name="marketAppId" type="number" required>
+      Algorand application ID of the market contract
+    </ResponseField>
+    
+    <ResponseField name="yesAssetId" type="number" required>
+      YES outcome token ASA ID
+    </ResponseField>
+    
+    <ResponseField name="noAssetId" type="number" required>
+      NO outcome token ASA ID
+    </ResponseField>
+    
+    <ResponseField name="endTs" type="number" required>
+      Resolution timestamp in seconds (Unix epoch)
+    </ResponseField>
+    
+    <ResponseField name="isResolved" type="boolean">
+      Whether the market has been resolved
+    </ResponseField>
+    
+    <ResponseField name="isLive" type="boolean">
+      Whether the market is currently tradeable
+    </ResponseField>
+    
+    <ResponseField name="feeBase" type="number">
+      Base fee percentage in microunits (e.g. 70000 = 7%)
+    </ResponseField>
+    
+    <ResponseField name="source" type="'api' | 'onchain'">
+      Data source: `api` or `onchain`
+    </ResponseField>
+    
+    <ResponseField name="yesProb" type="number">
+      YES probability (API only - not available from on-chain)
+    </ResponseField>
+    
+    <ResponseField name="noProb" type="number">
+      NO probability (API only - not available from on-chain)
+    </ResponseField>
+    
+    <ResponseField name="volume" type="number">
+      Trading volume in microunits (API only - not available from on-chain)
+    </ResponseField>
+    
+    <ResponseField name="image" type="string">
+      Market image URL (API only - not available from on-chain)
+    </ResponseField>
+    
+    <ResponseField name="categories" type="string[]">
+      Market categories (API only - not available from on-chain)
+    </ResponseField>
+    
+    <ResponseField name="slug" type="string">
+      URL-friendly slug (API only)
+    </ResponseField>
+    
+    <ResponseField name="featured" type="boolean">
+      Whether the market is featured (API only)
+    </ResponseField>
+    
+    <ResponseField name="resolution" type="number">
+      Resolved outcome: 1 = YES, 0 = NO, -1 = void
+    </ResponseField>
+    
+    <ResponseField name="options" type="MarketOption[]">
+      Options for multi-choice markets
+      
+      <Expandable title="MarketOption object">
+        <ResponseField name="id" type="string">
+          Option ID
+        </ResponseField>
+        
+        <ResponseField name="title" type="string">
+          Option title
+        </ResponseField>
+        
+        <ResponseField name="marketAppId" type="number">
+          Option's market app ID
+        </ResponseField>
+        
+        <ResponseField name="yesAssetId" type="number">
+          YES token ASA ID for this option
+        </ResponseField>
+        
+        <ResponseField name="noAssetId" type="number">
+          NO token ASA ID for this option
+        </ResponseField>
+        
+        <ResponseField name="yesProb" type="number">
+          YES probability
+        </ResponseField>
+        
+        <ResponseField name="noProb" type="number">
+          NO probability
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## getMarket
+
+Fetches a single market by its ID.
+
+**Behavior:**
+- If `apiKey` is configured → fetches from Alpha REST API using UUID
+- If no `apiKey` → reads from blockchain using app ID
+
+```typescript
+// With API key (use UUID)
+const market = await client.getMarket('abc123-def456-...');
+
+// Without API key (use app ID as string)
+const market = await client.getMarket('1234567890');
+
+if (market) {
+  console.log(`Market: ${market.title}`);
+  console.log(`Ends: ${new Date(market.endTs * 1000).toISOString()}`);
+}
+```
+
+### Parameters
+
+<ParamField path="marketId" type="string" required>
+  Market identifier:
+  - **With API key**: Use the market UUID (e.g. `'abc123-def456-...'`)
+  - **Without API key**: Use the market app ID as a string (e.g. `'1234567890'`)
+</ParamField>
+
+### Returns
+
+<ResponseField name="market" type="Market | null">
+  The market data, or `null` if not found. See [Market type above](#getlivemarkets) for field details.
+</ResponseField>
+
+---
+
+## getMarketsOnChain
+
+Fetches all live markets directly from the Algorand blockchain. No API key required.
+
+Discovers markets by querying all applications created by the market creator address, then reads their global state.
+
+**Includes:**
+- Market title
+- App ID and token ASAs
+- Resolution time
+- Fee structure
+- Resolved status
+
+**Does NOT include:**
+- Images
+- Categories
+- Volume
+- Probabilities
+
+```typescript
+// No API key needed - reads directly from blockchain
+const markets = await client.getMarketsOnChain();
+
+markets.forEach(m => {
+  console.log(`${m.title}`);
+  console.log(`  App ID: ${m.marketAppId}`);
+  console.log(`  YES ASA: ${m.yesAssetId}`);
+  console.log(`  NO ASA: ${m.noAssetId}`);
+  console.log(`  Ends: ${new Date(m.endTs * 1000).toISOString()}`);
+});
+```
+
+### Returns
+
+<ResponseField name="markets" type="Market[]">
+  Array of markets with on-chain data only. See [Market type above](#getlivemarkets) for field details.
+  
+  **Note:** Fields like `yesProb`, `noProb`, `volume`, `image`, and `categories` will be `undefined`.
+</ResponseField>
+
+---
+
+## getMarketOnChain
+
+Fetches a single market by its app ID directly from the blockchain. No API key required.
+
+```typescript
+const market = await client.getMarketOnChain(1234567890);
+
+if (market) {
+  console.log(`Market: ${market.title}`);
+  console.log(`YES ASA: ${market.yesAssetId}`);
+  console.log(`NO ASA: ${market.noAssetId}`);
+}
+```
+
+### Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The Algorand application ID of the market contract
+</ParamField>
+
+### Returns
+
+<ResponseField name="market" type="Market | null">
+  The market data from blockchain, or `null` if not found. See [Market type above](#getlivemarkets) for field details.
+  
+  **Note:** Only on-chain fields are populated. API-only fields like `image`, `volume`, etc. will be `undefined`.
+</ResponseField>
+
+---
+
+## Multi-Choice Markets
+
+Multi-choice markets are automatically grouped by the SDK. Options use the title format `"Parent Title : Option Name"`.
+
+```typescript
+const markets = await client.getLiveMarkets();
+
+// Find a multi-choice market
+const multiChoice = markets.find(m => m.options && m.options.length > 0);
+
+if (multiChoice) {
+  console.log(`Market: ${multiChoice.title}`);
+  console.log('Options:');
+  multiChoice.options?.forEach(opt => {
+    console.log(`  - ${opt.title} (${opt.yesProb}% YES)`);
+  });
+}
+```
+
+Each option has its own:
+- `marketAppId` - Separate market contract
+- `yesAssetId` / `noAssetId` - Separate outcome tokens
+- `yesProb` / `noProb` - Independent probabilities
+
+---
+
+## When to Use Each Method
+
+<Tabs>
+  <Tab title="getLiveMarkets">
+    **Best for: General use**
+    
+    ```typescript
+    const markets = await client.getLiveMarkets();
+    ```
+    
+    - Automatically uses best available data source
+    - Falls back gracefully if no API key
+    - Recommended for most applications
+  </Tab>
+  
+  <Tab title="getMarketsOnChain">
+    **Best for: Decentralized apps**
+    
+    ```typescript
+    const markets = await client.getMarketsOnChain();
+    ```
+    
+    - No API key required
+    - Direct blockchain reads
+    - Core market data only
+    - No dependency on Alpha API
+  </Tab>
+  
+  <Tab title="getLiveMarketsFromApi">
+    **Best for: Rich UI data**
+    
+    ```typescript
+    const markets = await client.getLiveMarketsFromApi();
+    ```
+    
+    - Requires API key
+    - Images, categories, volume
+    - Market probabilities
+    - Faster than on-chain discovery
+  </Tab>
+</Tabs>
+
+---
+
+## Related
+
+- [Reward Markets](/api/markets/reward-markets) - Markets with liquidity rewards
+- [On-Chain vs API](/api/markets/on-chain-vs-api) - Detailed comparison guide
+- [AlphaClient](/api/client) - Client configuration

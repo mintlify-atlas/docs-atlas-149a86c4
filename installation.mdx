@@ -1,0 +1,181 @@
+---
+title: "Installation"
+description: "Install the Alpha SDK and required dependencies"
+---
+
+# Installation
+
+The Alpha SDK is distributed as an npm package. It requires two peer dependencies: `algosdk` for Algorand blockchain interaction and `@algorandfoundation/algokit-utils` for transaction utilities.
+
+## Package Managers
+
+Install the SDK and peer dependencies using your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install @alpha-arcade/sdk algosdk @algorandfoundation/algokit-utils
+```
+
+```bash yarn
+yarn add @alpha-arcade/sdk algosdk @algorandfoundation/algokit-utils
+```
+
+```bash pnpm
+pnpm add @alpha-arcade/sdk algosdk @algorandfoundation/algokit-utils
+```
+
+</CodeGroup>
+
+## Dependencies
+
+### Required Peer Dependencies
+
+These packages must be installed alongside the SDK:
+
+| Package | Version | Purpose |
+|---------|---------|----------|
+| `algosdk` | `^3.5.2` | Algorand client library — handles blockchain communication, transaction signing, and account management |
+| `@algorandfoundation/algokit-utils` | `^9.2.0` | AlgoKit utilities — provides transaction composition and smart contract interaction helpers |
+
+### Included Dependencies
+
+The SDK automatically includes:
+
+| Package | Version | Purpose |
+|---------|---------|----------|
+| `decimal.js` | `^10.4.3` | High-precision decimal arithmetic for price and quantity calculations |
+
+<Note>
+  The SDK is published as an ESM and CommonJS hybrid module. It works in both Node.js and modern bundlers (Webpack, Vite, etc.).
+</Note>
+
+## Version Requirements
+
+- **Node.js**: 18.x or higher recommended
+- **TypeScript**: 5.0+ (if using TypeScript)
+- **Algorand SDK**: The SDK requires `algosdk` v3.5.2 or higher
+
+## Verify Installation
+
+Check that the SDK is correctly installed:
+
+```bash
+npm list @alpha-arcade/sdk algosdk @algorandfoundation/algokit-utils
+```
+
+You should see output similar to:
+
+```
+your-project@1.0.0 /path/to/project
+├── @algorandfoundation/algokit-utils@9.2.0
+├── @alpha-arcade/sdk@0.2.9
+└── algosdk@3.5.2
+```
+
+## TypeScript Configuration
+
+If you're using TypeScript, ensure your `tsconfig.json` has ESM support:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true
+  }
+}
+```
+
+<Tip>
+  The SDK ships with full TypeScript definitions. You'll get autocomplete and type checking out of the box.
+</Tip>
+
+## Import Syntax
+
+The SDK uses named exports. Import the `AlphaClient` and any utility functions you need:
+
+### ESM (Recommended)
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+```
+
+### CommonJS
+
+```javascript
+const { AlphaClient } = require('@alpha-arcade/sdk');
+const algosdk = require('algosdk');
+```
+
+## Environment Setup
+
+For development, create a `.env` file to store sensitive data:
+
+```bash .env
+# Optional: Alpha API key for enhanced features
+ALPHA_API_KEY=your_api_key_here
+
+# Required for signing transactions
+MNEMONIC=your twenty five word mnemonic phrase here
+```
+
+<Warning>
+  Never commit your `.env` file to version control. Add it to `.gitignore`:
+  
+  ```bash .gitignore
+  .env
+  .env.local
+  ```
+</Warning>
+
+Load environment variables in your application:
+
+```typescript
+import dotenv from 'dotenv';
+dotenv.config();
+
+const apiKey = process.env.ALPHA_API_KEY;
+const mnemonic = process.env.MNEMONIC;
+```
+
+## Optional: Get an API Key
+
+An API key unlocks enhanced features like market metadata, liquidity rewards, and cross-market order lookups.
+
+<Steps>
+  <Step title="Sign Up">
+    Go to [alphaarcade.com](https://alphaarcade.com) and create an account using email or Google.
+  </Step>
+  
+  <Step title="Navigate to Partners">
+    Open your **Account** page, then select the **Partners** tab.
+  </Step>
+  
+  <Step title="Generate Key">
+    Click **Create API key** and copy the generated key.
+  </Step>
+  
+  <Step title="Add to Environment">
+    Store it in your `.env` file:
+    
+    ```bash .env
+    ALPHA_API_KEY=your_api_key_here
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The API key is completely optional. The SDK works without it — you'll just have access to on-chain data only (no images, categories, or volume stats).
+</Note>
+
+## Next Steps
+
+<Card title="Quick Start" icon="rocket" href="/quickstart">
+  Learn how to initialize the client and place your first order
+</Card>

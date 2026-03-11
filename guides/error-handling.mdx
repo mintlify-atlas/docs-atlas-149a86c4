@@ -1,0 +1,614 @@
+---
+title: 'Error Handling'
+description: 'Handle errors gracefully and build robust trading applications'
+---
+
+Building reliable trading applications requires proper error handling. This guide covers common errors, retry strategies, and best practices for production systems.
+
+## Common Errors
+
+### Insufficient Balance
+
+Occurs when you try to place an order without enough USDC or outcome tokens.
+
+```typescript
+try {
+  const result = await client.createLimitOrder({
+    marketAppId: 12345678,
+    position: 1,
+    price: 500_000,
+    quantity: 10_000_000, // 10 USDC worth
+    isBuying: true,
+  });
+} catch (err) {
+  if ((err as Error).message.includes('insufficient')) {
+    console.error('Not enough USDC balance to place this order');
+    // Check balance and retry with smaller amount
+  }
+}
+```
+
+**Solution:** Check your balance before trading:
+
+```typescript
+const getUSDCBalance = async (
+  algodClient: algosdk.Algodv2,
+  address: string,
+  usdcAssetId: number
+) => {
+  const accountInfo = await algodClient.accountInformation(address).do();
+  const asset = accountInfo.assets.find((a: any) => a['asset-id'] === usdcAssetId);
+  return asset?.amount ?? 0;
+};
+
+const balance = await getUSDCBalance(algodClient, address, 31566704);
+if (balance < orderCost) {
+  throw new Error(`Insufficient balance: have $${balance / 1e6}, need $${orderCost / 1e6}`);
+}
+```
+
+### Invalid Market
+
+Occurs when the market doesn't exist or has been resolved.
+
+```typescript
+try {
+  const book = await client.getOrderbook(invalidMarketId);
+} catch (err) {
+  if ((err as Error).message.includes('application does not exist')) {
+    console.error('Market does not exist or has been deleted');
+  }
+}
+```
+
+**Solution:** Validate markets before trading:
+
+```typescript
+const validateMarket = async (client: AlphaClient, marketAppId: number) => {
+  try {
+    const markets = await client.getLiveMarkets();
+    const market = markets.find((m) => m.marketAppId === marketAppId);
+    
+    if (!market) {
+      throw new Error(`Market ${marketAppId} not found in live markets`);
+    }
+    
+    // Check if resolved
+    if (market.resolved) {
+      throw new Error(`Market ${marketAppId} is already resolved`);
+    }
+    
+    return market;
+  } catch (err) {
+    throw new Error(`Market validation failed: ${(err as Error).message}`);
+  }
+};
+```
+
+### Asset Not Opted In
+
+Occurs when you try to trade outcome tokens you haven't opted into.
+
+```typescript
+try {
+  await client.splitShares({ marketAppId, amount: 1_000_000 });
+} catch (err) {
+  if ((err as Error).message.includes('asset not opted in')) {
+    console.error('You must opt-in to the outcome tokens first');
+  }
+}
+```
+
+**Solution:** The SDK handles opt-ins automatically in most cases. For manual opt-in:
+
+```typescript
+import { checkAssetOptIn } from '@alpha-arcade/sdk';
+
+const ensureOptIn = async (
+  algodClient: algosdk.Algodv2,
+  address: string,
+  assetId: number
+) => {
+  const isOptedIn = await checkAssetOptIn(algodClient, address, assetId);
+  
+  if (!isOptedIn) {
+    console.log(`Need to opt-in to asset ${assetId}`);
+    // Opt-in logic here
+  }
+};
+```
+
+### Network Errors
+
+Occurs when Algod or Indexer is unavailable or slow.
+
+```typescript
+try {
+  const markets = await client.getLiveMarkets();
+} catch (err) {
+  if ((err as Error).message.includes('fetch failed')) {
+    console.error('Network error: could not reach Algorand node');
+  }
+}
+```
+
+**Solution:** Implement retry logic (see below).
+
+### API Key Errors
+
+Occurs when your Alpha API key is missing or invalid.
+
+```typescript
+try {
+  const markets = await client.getLiveMarkets();
+} catch (err) {
+  if ((err as Error).message.includes('apiKey is required')) {
+    console.error('Missing Alpha API key');
+    console.error('Get one from: https://alpha.arcade.markets/account');
+  }
+}
+```
+
+**Solution:** Always set your API key:
+
+```typescript
+if (!process.env.ALPHA_API_KEY) {
+  throw new Error('ALPHA_API_KEY environment variable is required');
+}
+
+const client = new AlphaClient({
+  // ... other config
+  apiKey: process.env.ALPHA_API_KEY,
+});
+```
+
+## Retry Logic
+
+### Exponential Backoff
+
+Retry failed operations with increasing delays:
+
+```typescript
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const retry = async <T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3,
+  baseDelay: number = 1000
+): Promise<T> => {
+  let lastError: Error;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err as Error;
+      
+      if (attempt < maxAttempts) {
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.log(`Attempt ${attempt} failed. Retrying in ${delay}ms...`);
+        await sleep(delay);
+      }
+    }
+  }
+  
+  throw lastError!;
+};
+```
+
+**Usage:**
+
+```typescript
+try {
+  const markets = await retry(
+    () => client.getLiveMarkets(),
+    3,
+    1000
+  );
+} catch (err) {
+  console.error('Failed after 3 retries:', (err as Error).message);
+}
+```
+
+### Selective Retry
+
+Only retry transient errors, not validation errors:
+
+```typescript
+const isRetryable = (err: Error): boolean => {
+  const message = err.message.toLowerCase();
+  
+  // Retry network errors
+  if (message.includes('fetch failed')) return true;
+  if (message.includes('timeout')) return true;
+  if (message.includes('econnreset')) return true;
+  
+  // Don't retry validation errors
+  if (message.includes('insufficient')) return false;
+  if (message.includes('invalid')) return false;
+  if (message.includes('does not exist')) return false;
+  
+  return false;
+};
+
+const smartRetry = async <T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3
+): Promise<T> => {
+  let lastError: Error;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err as Error;
+      
+      if (!isRetryable(lastError) || attempt >= maxAttempts) {
+        throw lastError;
+      }
+      
+      const delay = 1000 * Math.pow(2, attempt - 1);
+      console.log(`Retryable error. Waiting ${delay}ms...`);
+      await sleep(delay);
+    }
+  }
+  
+  throw lastError!;
+};
+```
+
+## Transaction Confirmation
+
+### Wait for Confirmation
+
+Ensure transactions are confirmed before proceeding:
+
+```typescript
+const waitForConfirmation = async (
+  algodClient: algosdk.Algodv2,
+  txId: string,
+  maxRounds: number = 10
+): Promise<any> => {
+  const status = await algodClient.status().do();
+  let lastRound = status['last-round'];
+  
+  while (true) {
+    const pendingInfo = await algodClient
+      .pendingTransactionInformation(txId)
+      .do();
+    
+    if (pendingInfo['confirmed-round'] !== null && pendingInfo['confirmed-round'] > 0) {
+      return pendingInfo;
+    }
+    
+    lastRound++;
+    await algodClient.statusAfterBlock(lastRound).do();
+    
+    if (lastRound > status['last-round'] + maxRounds) {
+      throw new Error(`Transaction ${txId} not confirmed after ${maxRounds} rounds`);
+    }
+  }
+};
+```
+
+**Usage:**
+
+```typescript
+const result = await client.createLimitOrder(params);
+
+for (const txId of result.txIds) {
+  await waitForConfirmation(algodClient, txId);
+  console.log(`Confirmed: ${txId}`);
+}
+```
+
+<Warning>
+  The SDK methods already wait for confirmation internally. Only use `waitForConfirmation` if you're constructing raw transactions.
+</Warning>
+
+## Production Error Handling
+
+### Comprehensive Error Handler
+
+```typescript
+class TradingError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public retryable: boolean = false
+  ) {
+    super(message);
+    this.name = 'TradingError';
+  }
+}
+
+const handleTradingError = (err: Error): TradingError => {
+  const message = err.message;
+  
+  // Insufficient balance
+  if (message.includes('insufficient')) {
+    return new TradingError(message, 'INSUFFICIENT_BALANCE', false);
+  }
+  
+  // Invalid market
+  if (message.includes('application does not exist')) {
+    return new TradingError(message, 'INVALID_MARKET', false);
+  }
+  
+  // Asset not opted in
+  if (message.includes('asset not opted in')) {
+    return new TradingError(message, 'NOT_OPTED_IN', false);
+  }
+  
+  // Network errors
+  if (message.includes('fetch failed') || message.includes('timeout')) {
+    return new TradingError(message, 'NETWORK_ERROR', true);
+  }
+  
+  // API errors
+  if (message.includes('API error')) {
+    return new TradingError(message, 'API_ERROR', true);
+  }
+  
+  // Unknown error
+  return new TradingError(message, 'UNKNOWN', false);
+};
+```
+
+**Usage:**
+
+```typescript
+try {
+  await client.createMarketOrder(params);
+} catch (err) {
+  const tradingError = handleTradingError(err as Error);
+  
+  console.error(`[${tradingError.code}] ${tradingError.message}`);
+  
+  if (tradingError.retryable) {
+    console.log('This error is retryable. Consider retrying...');
+  }
+  
+  // Log to monitoring service
+  // logger.error(tradingError);
+}
+```
+
+## Complete Example
+
+<CodeGroup>
+
+```typescript Robust Trading
+import dotenv from 'dotenv';
+import algosdk from 'algosdk';
+import { AlphaClient } from '@alpha-arcade/sdk';
+
+dotenv.config();
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const retry = async <T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3
+): Promise<T> => {
+  let lastError: Error;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err as Error;
+      
+      if (attempt < maxAttempts) {
+        const delay = 1000 * Math.pow(2, attempt - 1);
+        console.log(`Attempt ${attempt} failed. Retrying in ${delay}ms...`);
+        await sleep(delay);
+      }
+    }
+  }
+  
+  throw lastError!;
+};
+
+const main = async () => {
+  // Validate environment
+  if (!process.env.TEST_MNEMONIC) {
+    throw new Error('TEST_MNEMONIC is required');
+  }
+  if (!process.env.ALPHA_API_KEY) {
+    throw new Error('ALPHA_API_KEY is required');
+  }
+  
+  const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC);
+  const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+  const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+  
+  const client = new AlphaClient({
+    algodClient,
+    indexerClient,
+    signer: algosdk.makeBasicAccountTransactionSigner(account),
+    activeAddress: account.addr.toString(),
+    matcherAppId: 741347297,
+    usdcAssetId: 31566704,
+    apiKey: process.env.ALPHA_API_KEY,
+  });
+  
+  try {
+    // Fetch markets with retry
+    const markets = await retry(() => client.getLiveMarkets());
+    console.log(`Found ${markets.length} markets`);
+    
+    const market = markets[0];
+    
+    // Check balance
+    const accountInfo = await algodClient.accountInformation(account.addr).do();
+    const usdcAsset = accountInfo.assets.find((a: any) => a['asset-id'] === 31566704);
+    const balance = usdcAsset?.amount ?? 0;
+    
+    console.log(`USDC balance: $${balance / 1e6}`);
+    
+    if (balance < 100_000) {
+      throw new Error('Insufficient USDC balance (need at least $0.10)');
+    }
+    
+    // Place order with retry
+    const result = await retry(() =>
+      client.createLimitOrder({
+        marketAppId: market.marketAppId,
+        position: 1,
+        price: 100_000,
+        quantity: 100_000,
+        isBuying: true,
+      })
+    );
+    
+    console.log(`Order placed! Escrow: ${result.escrowAppId}`);
+    
+  } catch (err) {
+    const error = err as Error;
+    console.error('Trading failed:', error.message);
+    
+    // Handle specific errors
+    if (error.message.includes('insufficient')) {
+      console.error('Action: Add more USDC to your wallet');
+    } else if (error.message.includes('fetch failed')) {
+      console.error('Action: Check your internet connection');
+    } else {
+      console.error('Action: Review error and try again');
+    }
+    
+    process.exit(1);
+  }
+};
+
+main();
+```
+
+```typescript Error Classes
+class AlphaError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public retryable: boolean = false,
+    public data?: any
+  ) {
+    super(message);
+    this.name = 'AlphaError';
+  }
+}
+
+class InsufficientBalanceError extends AlphaError {
+  constructor(required: number, available: number) {
+    super(
+      `Insufficient balance: need $${required / 1e6}, have $${available / 1e6}`,
+      'INSUFFICIENT_BALANCE',
+      false,
+      { required, available }
+    );
+  }
+}
+
+class InvalidMarketError extends AlphaError {
+  constructor(marketAppId: number) {
+    super(
+      `Market ${marketAppId} does not exist or has been resolved`,
+      'INVALID_MARKET',
+      false,
+      { marketAppId }
+    );
+  }
+}
+
+class NetworkError extends AlphaError {
+  constructor(message: string) {
+    super(message, 'NETWORK_ERROR', true);
+  }
+}
+
+// Usage
+try {
+  await client.createLimitOrder(params);
+} catch (err) {
+  if (err instanceof InsufficientBalanceError) {
+    console.error('Top up your wallet');
+  } else if (err instanceof NetworkError) {
+    console.error('Retrying...');
+    // retry logic
+  }
+}
+```
+
+</CodeGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Validate inputs early">
+    Check parameters before making SDK calls:
+
+    ```typescript
+    if (price <= 0 || price > 1_000_000) {
+      throw new Error('Price must be between $0.01 and $1.00');
+    }
+    if (quantity <= 0) {
+      throw new Error('Quantity must be positive');
+    }
+    ```
+  </Step>
+
+  <Step title="Use try/catch consistently">
+    Wrap all SDK calls in try/catch blocks:
+
+    ```typescript
+    try {
+      const result = await client.createLimitOrder(params);
+    } catch (err) {
+      console.error('Order failed:', (err as Error).message);
+    }
+    ```
+  </Step>
+
+  <Step title="Log errors properly">
+    Include context in error logs:
+
+    ```typescript
+    catch (err) {
+      console.error('Failed to place order', {
+        marketAppId,
+        price,
+        quantity,
+        error: (err as Error).message,
+      });
+    }
+    ```
+  </Step>
+
+  <Step title="Implement monitoring">
+    Track error rates and alert on anomalies:
+
+    ```typescript
+    const errorCount = { network: 0, validation: 0, unknown: 0 };
+
+    catch (err) {
+      if (isNetworkError(err)) errorCount.network++;
+      else if (isValidationError(err)) errorCount.validation++;
+      else errorCount.unknown++;
+
+      if (errorCount.network > 10) {
+        // Alert: high network error rate
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building Bots" icon="robot" href="/guides/building-bots">
+    Apply error handling to automated trading systems
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/client">
+    View detailed API documentation
+  </Card>
+</CardGroup>

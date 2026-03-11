@@ -1,0 +1,481 @@
+---
+title: 'Building Trading Bots'
+description: 'Create automated trading strategies with the Alpha SDK'
+---
+
+The Alpha SDK makes it easy to build automated trading bots. This guide walks through creating a simple bot and covers best practices for production systems.
+
+## Simple Trading Bot
+
+Let's build a bot that scans markets and buys undervalued Yes tokens.
+
+### Bot Strategy
+
+- Scan all live markets every 60 seconds
+- If any Yes token has a best ask < $0.20, buy 1 share
+- Use configurable slippage protection
+- Handle errors gracefully
+
+### Bot Configuration
+
+```typescript
+const PRICE_THRESHOLD = 200_000;  // $0.20
+const QUANTITY = 1_000_000;       // 1 share
+const SLIPPAGE = 20_000;          // $0.02
+const POLL_INTERVAL_MS = 60_000;  // 60 seconds
+```
+
+### Setup Function
+
+<Steps>
+  <Step title="Initialize clients">
+    Create a reusable setup function:
+
+    ```typescript
+    import dotenv from 'dotenv';
+    import algosdk from 'algosdk';
+    import { AlphaClient } from '@alpha-arcade/sdk';
+
+    dotenv.config();
+
+    const setup = () => {
+      const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+      const algodClient = new algosdk.Algodv2(
+        '',
+        'https://mainnet-api.algonode.cloud',
+        443
+      );
+      const indexerClient = new algosdk.Indexer(
+        '',
+        'https://mainnet-idx.algonode.cloud',
+        443
+      );
+
+      return {
+        client: new AlphaClient({
+          algodClient,
+          indexerClient,
+          signer: algosdk.makeBasicAccountTransactionSigner(account),
+          activeAddress: account.addr.toString(),
+          matcherAppId: 741347297,
+          usdcAssetId: 31566704,
+          apiKey: process.env.ALPHA_API_KEY!,
+        }),
+        address: account.addr.toString(),
+      };
+    };
+    ```
+  </Step>
+
+  <Step title="Build the scan function">
+    Implement market scanning logic:
+
+    ```typescript
+    const scan = async (client: AlphaClient) => {
+      console.log(`[${new Date().toISOString()}] Scanning markets...`);
+      
+      const markets = await client.getLiveMarkets();
+      console.log(`Found ${markets.length} live markets`);
+
+      for (const market of markets.slice(0, 10)) {
+        // Only scan first 10 to avoid rate limits
+        try {
+          const book = await client.getOrderbook(market.marketAppId);
+          const asks = book.yes.asks.sort((a, b) => a.price - b.price);
+
+          if (asks.length > 0 && asks[0].price < PRICE_THRESHOLD) {
+            console.log(
+              `  OPPORTUNITY: "${market.title}" — Yes ask at $${asks[0].price / 1e6}`
+            );
+
+            // Execute the trade
+            const result = await client.createMarketOrder({
+              marketAppId: market.marketAppId,
+              position: 1,
+              price: asks[0].price,
+              quantity: QUANTITY,
+              isBuying: true,
+              slippage: SLIPPAGE,
+            });
+            
+            console.log(`  BOUGHT! Escrow: ${result.escrowAppId}`);
+          }
+        } catch (err) {
+          console.error(
+            `  Error scanning ${market.title}:`,
+            (err as Error).message
+          );
+        }
+      }
+    };
+    ```
+  </Step>
+
+  <Step title="Run the bot loop">
+    Set up continuous scanning:
+
+    ```typescript
+    const main = async () => {
+      const { client } = setup();
+
+      // Run once immediately
+      await scan(client);
+
+      // Then loop every POLL_INTERVAL_MS
+      setInterval(() => scan(client), POLL_INTERVAL_MS);
+    };
+
+    main().catch(console.error);
+    ```
+  </Step>
+</Steps>
+
+## Complete Bot Example
+
+<CodeGroup>
+
+```typescript Simple Bot
+import dotenv from 'dotenv';
+import algosdk from 'algosdk';
+import { AlphaClient } from '@alpha-arcade/sdk';
+
+dotenv.config();
+
+const PRICE_THRESHOLD = 200_000; // $0.20
+const QUANTITY = 1_000_000; // 1 share
+const SLIPPAGE = 20_000; // $0.02
+const POLL_INTERVAL_MS = 60_000; // 60 seconds
+
+const setup = () => {
+  const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+  const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+  const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+  return {
+    client: new AlphaClient({
+      algodClient,
+      indexerClient,
+      signer: algosdk.makeBasicAccountTransactionSigner(account),
+      activeAddress: account.addr.toString(),
+      matcherAppId: 741347297,
+      usdcAssetId: 31566704,
+      apiKey: process.env.ALPHA_API_KEY!,
+    }),
+    address: account.addr.toString(),
+  };
+};
+
+const scan = async (client: AlphaClient) => {
+  console.log(`[${new Date().toISOString()}] Scanning markets...`);
+  const markets = await client.getLiveMarkets();
+  console.log(`Found ${markets.length} live markets`);
+
+  for (const market of markets.slice(0, 10)) {
+    // Only scan first 10 to avoid rate limits
+    try {
+      const book = await client.getOrderbook(market.marketAppId);
+      const asks = book.yes.asks.sort((a, b) => a.price - b.price);
+
+      if (asks.length > 0 && asks[0].price < PRICE_THRESHOLD) {
+        console.log(`  OPPORTUNITY: "${market.title}" — Yes ask at $${asks[0].price / 1e6}`);
+
+        // Uncomment to actually trade:
+        // const result = await client.createMarketOrder({
+        //   marketAppId: market.marketAppId,
+        //   position: 1,
+        //   price: asks[0].price,
+        //   quantity: QUANTITY,
+        //   isBuying: true,
+        //   slippage: SLIPPAGE,
+        // });
+        // console.log(`  BOUGHT! Escrow: ${result.escrowAppId}`);
+      }
+    } catch (err) {
+      console.error(`  Error scanning ${market.title}:`, (err as Error).message);
+    }
+  }
+};
+
+const main = async () => {
+  const { client } = setup();
+
+  // Run once immediately
+  await scan(client);
+
+  // Then loop
+  setInterval(() => scan(client), POLL_INTERVAL_MS);
+};
+
+main().catch(console.error);
+```
+
+```typescript Market Maker Bot
+import dotenv from 'dotenv';
+import algosdk from 'algosdk';
+import { AlphaClient } from '@alpha-arcade/sdk';
+
+dotenv.config();
+
+const SPREAD = 0.10; // 10% spread
+const QUANTITY = 5_000_000; // 5 shares per side
+const TARGET_MARKET_ID = 12345678;
+
+const setup = () => {
+  const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+  const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+  const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+  return {
+    client: new AlphaClient({
+      algodClient,
+      indexerClient,
+      signer: algosdk.makeBasicAccountTransactionSigner(account),
+      activeAddress: account.addr.toString(),
+      matcherAppId: 741347297,
+      usdcAssetId: 31566704,
+      apiKey: process.env.ALPHA_API_KEY!,
+    }),
+  };
+};
+
+const placeOrders = async (client: AlphaClient) => {
+  // Get current orderbook
+  const book = await client.getOrderbook(TARGET_MARKET_ID);
+  
+  // Calculate mid price
+  const bestBid = book.yes.bids.sort((a, b) => b.price - a.price)[0]?.price ?? 500_000;
+  const bestAsk = book.yes.asks.sort((a, b) => a.price - b.price)[0]?.price ?? 500_000;
+  const midPrice = (bestBid + bestAsk) / 2;
+  
+  // Place orders around mid price
+  const buyPrice = Math.floor(midPrice * (1 - SPREAD / 2));
+  const sellPrice = Math.ceil(midPrice * (1 + SPREAD / 2));
+  
+  console.log(`Placing buy at $${buyPrice / 1e6}, sell at $${sellPrice / 1e6}`);
+  
+  // Buy order
+  await client.createLimitOrder({
+    marketAppId: TARGET_MARKET_ID,
+    position: 1,
+    price: buyPrice,
+    quantity: QUANTITY,
+    isBuying: true,
+  });
+  
+  // Sell order
+  await client.createLimitOrder({
+    marketAppId: TARGET_MARKET_ID,
+    position: 1,
+    price: sellPrice,
+    quantity: QUANTITY,
+    isBuying: false,
+  });
+};
+
+const main = async () => {
+  const { client } = setup();
+  await placeOrders(client);
+};
+
+main().catch(console.error);
+```
+
+</CodeGroup>
+
+## Best Practices
+
+### 1. Rate Limiting
+
+<Warning>
+  The Alpha API has rate limits. Avoid scanning too many markets or polling too frequently.
+</Warning>
+
+```typescript
+// Good: Scan top 10 markets every 60 seconds
+for (const market of markets.slice(0, 10)) {
+  await scan(market);
+}
+
+// Bad: Scan all 1000+ markets every 5 seconds
+for (const market of markets) {
+  await scan(market);
+}
+```
+
+### 2. Error Handling
+
+Always wrap API calls in try/catch blocks:
+
+```typescript
+try {
+  const result = await client.createMarketOrder(params);
+  console.log(`Success: ${result.escrowAppId}`);
+} catch (err) {
+  console.error('Order failed:', (err as Error).message);
+  // Don't crash - continue to next market
+}
+```
+
+See [Error Handling](/guides/error-handling) for comprehensive patterns.
+
+### 3. Balance Management
+
+Check your USDC balance before trading:
+
+```typescript
+const checkBalance = async (algodClient: algosdk.Algodv2, address: string) => {
+  const accountInfo = await algodClient.accountInformation(address).do();
+  const usdcAsset = accountInfo.assets.find((a: any) => a['asset-id'] === 31566704);
+  const balance = usdcAsset?.amount ?? 0;
+  
+  console.log(`USDC balance: $${balance / 1e6}`);
+  return balance;
+};
+
+if (await checkBalance(algodClient, address) < QUANTITY) {
+  console.error('Insufficient USDC balance');
+  return;
+}
+```
+
+### 4. Logging and Monitoring
+
+Implement structured logging:
+
+```typescript
+const log = {
+  info: (msg: string, data?: any) => {
+    console.log(`[INFO] [${new Date().toISOString()}] ${msg}`, data ?? '');
+  },
+  error: (msg: string, err: Error) => {
+    console.error(`[ERROR] [${new Date().toISOString()}] ${msg}`, err.message);
+  },
+  trade: (market: string, price: number, quantity: number) => {
+    console.log(
+      `[TRADE] [${new Date().toISOString()}] ${market} @ $${price / 1e6} x ${quantity / 1e6}`
+    );
+  },
+};
+
+log.info('Bot started');
+log.trade(market.title, price, quantity);
+```
+
+### 5. Graceful Shutdown
+
+Handle process signals to clean up:
+
+```typescript
+let isShuttingDown = false;
+
+process.on('SIGINT', async () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  console.log('\nShutting down gracefully...');
+  
+  // Cancel all open orders
+  const orders = await client.getOpenOrders(TARGET_MARKET_ID);
+  for (const order of orders) {
+    await client.cancelOrder({
+      marketAppId: TARGET_MARKET_ID,
+      escrowAppId: order.escrowAppId,
+      orderOwner: address,
+    });
+  }
+  
+  console.log('Cleanup complete. Exiting.');
+  process.exit(0);
+});
+```
+
+## Advanced Strategies
+
+### Arbitrage Bot
+
+Detect when Yes + No prices exceed $1.00:
+
+```typescript
+const detectArbitrage = (book: Orderbook) => {
+  const bestYesAsk = book.yes.asks.sort((a, b) => a.price - b.price)[0];
+  const bestNoAsk = book.no.asks.sort((a, b) => a.price - b.price)[0];
+  
+  if (!bestYesAsk || !bestNoAsk) return null;
+  
+  const totalCost = bestYesAsk.price + bestNoAsk.price;
+  const profit = 1_000_000 - totalCost; // 1 USDC - total cost
+  
+  if (profit > 50_000) { // $0.05 profit minimum
+    return { yesPrice: bestYesAsk.price, noPrice: bestNoAsk.price, profit };
+  }
+  
+  return null;
+};
+```
+
+### Momentum Bot
+
+Track price movements and trade on trends:
+
+```typescript
+const priceHistory: Record<number, number[]> = {};
+
+const trackPrice = (marketAppId: number, price: number) => {
+  if (!priceHistory[marketAppId]) {
+    priceHistory[marketAppId] = [];
+  }
+  priceHistory[marketAppId].push(price);
+  
+  // Keep last 10 prices only
+  if (priceHistory[marketAppId].length > 10) {
+    priceHistory[marketAppId].shift();
+  }
+};
+
+const detectMomentum = (marketAppId: number) => {
+  const prices = priceHistory[marketAppId];
+  if (prices.length < 5) return null;
+  
+  // Simple momentum: average of last 3 > average of previous 3
+  const recentAvg = prices.slice(-3).reduce((a, b) => a + b) / 3;
+  const previousAvg = prices.slice(-6, -3).reduce((a, b) => a + b) / 3;
+  
+  if (recentAvg > previousAvg * 1.05) {
+    return 'up';
+  } else if (recentAvg < previousAvg * 0.95) {
+    return 'down';
+  }
+  
+  return null;
+};
+```
+
+## Testing Your Bot
+
+<Tip>
+  Always test with small amounts on mainnet or use commented-out trade logic during development.
+</Tip>
+
+### Dry Run Mode
+
+```typescript
+const DRY_RUN = true;
+
+if (DRY_RUN) {
+  console.log(`[DRY RUN] Would buy ${QUANTITY / 1e6} shares at $${price / 1e6}`);
+} else {
+  const result = await client.createMarketOrder(params);
+  console.log(`Bought! Escrow: ${result.escrowAppId}`);
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="shield-exclamation" href="/guides/error-handling">
+    Handle errors and implement retry logic for production bots
+  </Card>
+  <Card title="Placing Orders" icon="chart-line" href="/guides/placing-orders">
+    Deep dive into order types and parameters
+  </Card>
+</CardGroup>

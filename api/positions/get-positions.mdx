@@ -1,0 +1,120 @@
+---
+title: "Get Positions"
+description: "View token holdings across all markets"
+---
+
+## Overview
+
+The `getPositions` method retrieves all outcome token positions (YES/NO) for a wallet across all Alpha Market markets.
+
+This method reads on-chain account information and maps ASA holdings to their respective markets, returning raw token balances in microunits.
+
+---
+
+## getPositions
+
+Gets all token positions for a wallet across all markets.
+
+```typescript
+const positions = await client.getPositions();
+// Or specify a wallet address
+const positions = await client.getPositions('WALLET_ADDRESS_HERE');
+```
+
+### Parameters
+
+<ParamField path="walletAddress" type="string">
+  Optional wallet address. If omitted, uses the `activeAddress` from your client config.
+</ParamField>
+
+### Returns
+
+Returns a `Promise<WalletPosition[]>` where each `WalletPosition` contains:
+
+<ResponseField name="marketAppId" type="number">
+  The market app ID
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Market title (fetched from on-chain global state)
+</ResponseField>
+
+<ResponseField name="yesAssetId" type="number">
+  YES token ASA ID
+</ResponseField>
+
+<ResponseField name="noAssetId" type="number">
+  NO token ASA ID
+</ResponseField>
+
+<ResponseField name="yesBalance" type="number">
+  YES token balance in microunits (e.g. `1_000_000` = 1 share)
+</ResponseField>
+
+<ResponseField name="noBalance" type="number">
+  NO token balance in microunits (e.g. `1_000_000` = 1 share)
+</ResponseField>
+
+### Example
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+});
+
+console.log(`Wallet: ${account.addr.toString()}`);
+console.log('Fetching positions...\n');
+
+const positions = await client.getPositions();
+
+if (positions.length === 0) {
+  console.log('No positions found.');
+} else {
+  for (const pos of positions) {
+    console.log(`Market: ${pos.title}`);
+    console.log(`  Market App ID: ${pos.marketAppId}`);
+    console.log(`  YES (${pos.yesAssetId}): ${pos.yesBalance / 1e6} shares`);
+    console.log(`  NO  (${pos.noAssetId}): ${pos.noBalance / 1e6} shares`);
+    console.log();
+  }
+}
+```
+
+### Type Definition
+
+```typescript
+export type WalletPosition = {
+  /** Market app ID */
+  marketAppId: number;
+  /** Market title (fetched from on-chain global state) */
+  title: string;
+  /** YES token ASA ID */
+  yesAssetId: number;
+  /** NO token ASA ID */
+  noAssetId: number;
+  /** YES token balance in microunits */
+  yesBalance: number;
+  /** NO token balance in microunits */
+  noBalance: number;
+};
+```
+
+### Notes
+
+- Returns only non-zero positions
+- All amounts are in microunits (divide by `1e6` to get decimal values)
+- This method returns raw token balances only
+- For cost basis, profit/loss, and richer position data, use the Alpha API's position endpoints
+- The method parses market info from on-chain asset names (`"Alpha Market {appId} Yes"` / `"Alpha Market {appId} No"`)

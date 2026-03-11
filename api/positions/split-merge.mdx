@@ -1,0 +1,161 @@
+---
+title: "Split and Merge Shares"
+description: "Convert between USDC and outcome tokens"
+---
+
+## Overview
+
+Split and merge operations allow you to convert between USDC and outcome tokens (YES/NO pairs):
+
+- **Split**: Convert USDC into equal amounts of YES and NO tokens (1 USDC → 1 YES + 1 NO)
+- **Merge**: Convert equal amounts of YES and NO tokens back into USDC (1 YES + 1 NO → 1 USDC)
+
+Together, one YES token and one NO token always equal exactly $1.00 USDC. You can trade them independently or merge them back at any time.
+
+---
+
+## splitShares
+
+Splits USDC into equal amounts of YES and NO outcome tokens.
+
+```typescript
+await client.splitShares({
+  marketAppId: 123456789,
+  amount: 1_000_000, // $1.00 in microunits
+});
+```
+
+### Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The market app ID
+</ParamField>
+
+<ParamField path="amount" type="number" required>
+  Amount of USDC to split in microunits (e.g. `1_000_000` = $1.00)
+</ParamField>
+
+### Returns
+
+Returns a `Promise<SplitMergeResult>`:
+
+<ResponseField name="success" type="boolean">
+  Whether the operation succeeded
+</ResponseField>
+
+<ResponseField name="txIds" type="string[]">
+  Transaction IDs from the atomic group
+</ResponseField>
+
+<ResponseField name="confirmedRound" type="number">
+  Confirmed round number
+</ResponseField>
+
+### Example
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+});
+
+// Split $0.50 USDC into YES + NO tokens
+const splitResult = await client.splitShares({
+  marketAppId: 123456789,
+  amount: 500_000, // $0.50
+});
+
+console.log(`Split done! Round: ${splitResult.confirmedRound}`);
+
+// Check positions
+const positions = await client.getPositions();
+const pos = positions.find((p) => p.marketAppId === 123456789);
+if (pos) {
+  console.log(`YES balance: ${pos.yesBalance / 1e6}`);
+  console.log(`NO balance: ${pos.noBalance / 1e6}`);
+}
+```
+
+---
+
+## mergeShares
+
+Merges equal amounts of YES and NO tokens back into USDC. This is the inverse of split.
+
+```typescript
+await client.mergeShares({
+  marketAppId: 123456789,
+  amount: 1_000_000, // Merge 1 YES + 1 NO = $1.00 USDC
+});
+```
+
+### Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The market app ID
+</ParamField>
+
+<ParamField path="amount" type="number" required>
+  Amount to merge in microunits. This amount is deducted from both your YES and NO balances (e.g. `1_000_000` merges 1 YES + 1 NO → $1.00 USDC)
+</ParamField>
+
+### Returns
+
+Returns a `Promise<SplitMergeResult>`:
+
+<ResponseField name="success" type="boolean">
+  Whether the operation succeeded
+</ResponseField>
+
+<ResponseField name="txIds" type="string[]">
+  Transaction IDs from the atomic group
+</ResponseField>
+
+<ResponseField name="confirmedRound" type="number">
+  Confirmed round number
+</ResponseField>
+
+### Example
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+});
+
+// Merge 0.5 YES + 0.5 NO back into $0.50 USDC
+const mergeResult = await client.mergeShares({
+  marketAppId: 123456789,
+  amount: 500_000,
+});
+
+console.log(`Merge done! Round: ${mergeResult.confirmedRound}`);
+```
+
+### Use Cases
+
+- **Risk-free profit extraction**: If you have matching YES and NO tokens from arbitrage or market making, merge them to extract USDC without market exposure
+- **Reduce exposure**: Convert paired positions back to cash
+- **Portfolio rebalancing**: Exit markets while avoiding slippage from selling on the orderbook

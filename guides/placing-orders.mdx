@@ -1,0 +1,319 @@
+---
+title: 'Placing Orders'
+description: 'Learn how to place limit and market orders on Alpha Markets'
+---
+
+Alpha Markets supports two types of orders: **limit orders** and **market orders**. This guide shows you how to place both types and manage them effectively.
+
+## Order Types
+
+### Limit Orders
+
+Limit orders sit on the orderbook at your specified price until matched or cancelled. They execute **only** at your exact price with zero slippage.
+
+**Best for:**
+- Setting precise entry/exit points
+- Making markets (providing liquidity)
+- Trading when you're not in a hurry
+
+### Market Orders
+
+Market orders execute immediately against the best available prices on the orderbook. They use automatic matching with configurable slippage tolerance.
+
+**Best for:**
+- Entering or exiting positions quickly
+- Trading liquid markets with tight spreads
+- Time-sensitive strategies
+
+## Placing a Limit Order
+
+<Steps>
+  <Step title="Initialize the client">
+    Set up your AlphaClient with Algod, Indexer, and signer:
+
+    ```typescript
+    import algosdk from 'algosdk';
+    import { AlphaClient } from '@alpha-arcade/sdk';
+
+    const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+    const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+    const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+    const client = new AlphaClient({
+      algodClient,
+      indexerClient,
+      signer: algosdk.makeBasicAccountTransactionSigner(account),
+      activeAddress: account.addr.toString(),
+      matcherAppId: 741347297,
+      usdcAssetId: 31566704,
+      apiKey: process.env.ALPHA_API_KEY!,
+    });
+    ```
+  </Step>
+
+  <Step title="Fetch a market">
+    Get available markets to trade on:
+
+    ```typescript
+    const markets = await client.getLiveMarkets();
+    const market = markets[0];
+    console.log(`Trading on: ${market.title}`);
+    ```
+  </Step>
+
+  <Step title="Create the limit order">
+    Place a limit buy order for 1 Yes share at $0.10:
+
+    ```typescript
+    const result = await client.createLimitOrder({
+      marketAppId: market.marketAppId,
+      position: 1,           // 1 = Yes, 2 = No
+      price: 100_000,        // $0.10 (6 decimals)
+      quantity: 1_000_000,   // 1 share (6 decimals)
+      isBuying: true,        // Buy order
+    });
+
+    console.log(`Order created! Escrow: ${result.escrowAppId}`);
+    console.log(`Tx IDs: ${result.txIds.join(', ')}`);
+    ```
+
+    <Warning>
+      All prices and quantities use **6 decimal places**. To convert:
+      - $0.50 = `500_000`
+      - 2.5 shares = `2_500_000`
+    </Warning>
+  </Step>
+</Steps>
+
+### Understanding Positions
+
+- `position: 1` - Yes outcome tokens
+- `position: 2` - No outcome tokens
+
+### Understanding Prices
+
+Prices are denominated in USDC with 6 decimals:
+
+| Human Price | SDK Value   |
+|-------------|-------------|
+| $0.01       | `10_000`    |
+| $0.10       | `100_000`   |
+| $0.50       | `500_000`   |
+| $1.00       | `1_000_000` |
+
+## Placing a Market Order
+
+Market orders match immediately against the orderbook. They require you to specify a **slippage tolerance**.
+
+<Steps>
+  <Step title="Check the orderbook">
+    View available liquidity before placing your order:
+
+    ```typescript
+    const markets = await client.getLiveMarkets();
+    const market = markets[0];
+
+    const book = await client.getOrderbook(market.marketAppId);
+    console.log(`Yes asks: ${book.yes.asks.length}, Yes bids: ${book.yes.bids.length}`);
+    ```
+  </Step>
+
+  <Step title="Find the best price">
+    Sort the orderbook to find the best available price:
+
+    ```typescript
+    if (book.yes.asks.length === 0) {
+      throw new Error('No asks available - cannot place market buy order');
+    }
+
+    const bestAsk = book.yes.asks.sort((a, b) => a.price - b.price)[0];
+    console.log(`Best ask: $${bestAsk.price / 1e6}`);
+    ```
+  </Step>
+
+  <Step title="Place the market order">
+    Create the order with slippage protection:
+
+    ```typescript
+    const result = await client.createMarketOrder({
+      marketAppId: market.marketAppId,
+      position: 1,
+      price: bestAsk.price,
+      quantity: 1_000_000,   // 1 share
+      isBuying: true,
+      slippage: 50_000,      // $0.05 max slippage
+    });
+
+    console.log(`Order created! Escrow: ${result.escrowAppId}`);
+    console.log(`Matched: ${(result.matchedQuantity ?? 0) / 1e6} shares`);
+    ```
+
+    <Tip>
+      Set slippage based on market depth and urgency:
+      - Liquid markets: `20_000` - `50_000` ($0.02 - $0.05)
+      - Illiquid markets: `100_000` - `200_000` ($0.10 - $0.20)
+    </Tip>
+  </Step>
+</Steps>
+
+## Cancelling Orders
+
+Cancel any unfilled limit order to reclaim your escrowed funds:
+
+```typescript
+const cancelResult = await client.cancelOrder({
+  marketAppId: market.marketAppId,
+  escrowAppId: result.escrowAppId,
+  orderOwner: account.addr.toString(),
+});
+
+console.log(`Cancelled: ${cancelResult.success}`);
+```
+
+<Warning>
+  You can only cancel orders you own. The `orderOwner` must match your `activeAddress`.
+</Warning>
+
+## Amending Orders
+
+You can modify an existing order's price or quantity without cancelling:
+
+```typescript
+const amendResult = await client.amendOrder({
+  marketAppId: market.marketAppId,
+  escrowAppId: existingEscrowAppId,
+  newPrice: 150_000,      // Update to $0.15
+  newQuantity: 2_000_000, // Update to 2 shares (optional)
+});
+
+console.log(`Order amended: ${amendResult.success}`);
+```
+
+<Tip>
+  Amending is cheaper than cancelling + creating a new order, as it reuses the existing escrow app.
+</Tip>
+
+## Complete Example: Limit Order
+
+<CodeGroup>
+
+```typescript Limit Order
+import dotenv from 'dotenv';
+import algosdk from 'algosdk';
+import { AlphaClient } from '@alpha-arcade/sdk';
+
+dotenv.config();
+
+const main = async () => {
+  const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+  const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+  const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+  const client = new AlphaClient({
+    algodClient,
+    indexerClient,
+    signer: algosdk.makeBasicAccountTransactionSigner(account),
+    activeAddress: account.addr.toString(),
+    matcherAppId: 741347297,
+    usdcAssetId: 31566704,
+    apiKey: process.env.ALPHA_API_KEY!,
+  });
+
+  // Fetch a market
+  const markets = await client.getLiveMarkets();
+  const market = markets[0];
+  console.log(`Placing order on: ${market.title}`);
+
+  // Place a limit buy order: 1 Yes share at $0.10
+  const result = await client.createLimitOrder({
+    marketAppId: market.marketAppId,
+    position: 1,
+    price: 100_000,
+    quantity: 1_000_000,
+    isBuying: true,
+  });
+
+  console.log(`Order created! Escrow: ${result.escrowAppId}`);
+  console.log(`Tx IDs: ${result.txIds.join(', ')}`);
+
+  // Cancel the order to clean up
+  if (result.escrowAppId > 0) {
+    const cancelResult = await client.cancelOrder({
+      marketAppId: market.marketAppId,
+      escrowAppId: result.escrowAppId,
+      orderOwner: account.addr.toString(),
+    });
+    console.log(`Order cancelled: ${cancelResult.success}`);
+  }
+};
+
+main().catch(console.error);
+```
+
+```typescript Market Order
+import dotenv from 'dotenv';
+import algosdk from 'algosdk';
+import { AlphaClient } from '@alpha-arcade/sdk';
+
+dotenv.config();
+
+const main = async () => {
+  const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+  const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+  const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+  const client = new AlphaClient({
+    algodClient,
+    indexerClient,
+    signer: algosdk.makeBasicAccountTransactionSigner(account),
+    activeAddress: account.addr.toString(),
+    matcherAppId: 741347297,
+    usdcAssetId: 31566704,
+    apiKey: process.env.ALPHA_API_KEY!,
+  });
+
+  const markets = await client.getLiveMarkets();
+  const market = markets[0];
+  console.log(`Market: ${market.title}`);
+
+  // Check the orderbook first
+  const book = await client.getOrderbook(market.marketAppId);
+  console.log(`Orderbook — Yes asks: ${book.yes.asks.length}, Yes bids: ${book.yes.bids.length}`);
+
+  if (book.yes.asks.length === 0) {
+    console.log('No asks available — cannot place market buy order');
+    return;
+  }
+
+  const bestAsk = book.yes.asks.sort((a, b) => a.price - b.price)[0];
+  console.log(`Best ask: $${bestAsk.price / 1e6}`);
+
+  // Place a market order to buy 1 Yes share
+  const result = await client.createMarketOrder({
+    marketAppId: market.marketAppId,
+    position: 1,
+    price: bestAsk.price,
+    quantity: 1_000_000,
+    isBuying: true,
+    slippage: 50_000, // $0.05 slippage
+  });
+
+  console.log(`Order created! Escrow: ${result.escrowAppId}`);
+  console.log(`Matched quantity: ${(result.matchedQuantity ?? 0) / 1e6} shares`);
+};
+
+main().catch(console.error);
+```
+
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Managing Positions" icon="layer-group" href="/guides/managing-positions">
+    Learn to split, merge, and claim your outcome tokens
+  </Card>
+  <Card title="Error Handling" icon="shield-exclamation" href="/guides/error-handling">
+    Handle common errors and implement retry logic
+  </Card>
+</CardGroup>

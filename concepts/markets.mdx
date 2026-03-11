@@ -1,0 +1,233 @@
+---
+title: Prediction Markets
+description: Understanding Alpha's prediction markets, market types, and lifecycle
+---
+
+## What is a Prediction Market?
+
+A prediction market is a decentralized trading platform where participants buy and sell outcome tokens representing different future events. Prices reflect the collective probability of each outcome occurring.
+
+On Alpha, every market is a smart contract on the Algorand blockchain that manages:
+- **YES and NO outcome tokens** (Algorand Standard Assets)
+- **Collateral escrow** (USDC)
+- **Resolution logic** (oracle-based settlement)
+
+## Market Structure
+
+Each market is defined by the `Market` type from `src/types.ts`:
+
+```typescript
+export type Market = {
+  /** Market ID (app ID as string for on-chain, UUID for API) */
+  id: string;
+  title: string;
+  slug?: string;
+  image?: string;
+  marketAppId: number;
+  yesAssetId: number;
+  noAssetId: number;
+  /** YES probability (API only) */
+  yesProb?: number;
+  /** NO probability (API only) */
+  noProb?: number;
+  /** Trading volume (API only) */
+  volume?: number;
+  /** End/resolution timestamp in seconds */
+  endTs: number;
+  resolution?: number;
+  isResolved?: boolean;
+  isLive?: boolean;
+  categories?: string[];
+  featured?: boolean;
+  options?: MarketOption[];
+  feeBase?: number;
+  /** Data source: 'onchain' or 'api' */
+  source?: 'onchain' | 'api';
+};
+```
+
+<Info>
+The `marketAppId` is the unique identifier for the market smart contract on Algorand. It never changes and is used for all trading operations.
+</Info>
+
+## Market Types
+
+<Tabs>
+  <Tab title="Binary Markets">
+    Binary markets have exactly two outcomes: **YES** and **NO**.
+
+    Example: "Will ETH reach $5,000 by December?"
+    - YES token: Pays $1.00 if the event occurs
+    - NO token: Pays $1.00 if the event does not occur
+
+    Binary markets have a simple title with no special separators.
+  </Tab>
+  
+  <Tab title="Multi-Choice Markets">
+    Multi-choice markets group several binary options under a single parent question.
+
+    Example: "Who will win the 2024 election?"
+    - Option 1: "Candidate A"
+    - Option 2: "Candidate B"
+    - Option 3: "Other"
+
+    Each option is a separate market contract with its own YES/NO tokens. Multi-choice options use titles formatted as:
+    ```
+    Parent Title : Option Name
+    ```
+
+    The SDK automatically groups these using `groupMultiChoiceMarkets()` in `src/modules/markets.ts`.
+
+    <Accordion title="Multi-Choice Implementation Details">
+      ```typescript
+      // Multi-choice markets are detected by the " : " separator
+      const separatorIdx = m.title.lastIndexOf(' : ');
+      if (separatorIdx === -1) {
+        // Binary market
+      } else {
+        // Multi-choice option
+        const parentTitle = m.title.substring(0, separatorIdx).trim();
+        const optionTitle = m.title.substring(separatorIdx + 3).trim();
+      }
+      ```
+
+      Each option has its own `MarketOption` entry:
+      ```typescript
+      export type MarketOption = {
+        id: string;
+        title: string;
+        marketAppId: number;
+        yesAssetId: number;
+        noAssetId: number;
+        yesProb: number;
+        noProb: number;
+      };
+      ```
+    </Accordion>
+  </Tab>
+</Tabs>
+
+## Market Discovery
+
+There are two ways to discover markets:
+
+### On-Chain Discovery (No API Key Required)
+
+The `getMarketsOnChain()` function reads directly from the Algorand blockchain:
+
+```typescript
+const markets = await client.getMarketsOnChain();
+```
+
+This approach:
+- Looks up all applications created by the market creator address
+- Reads each market's global state
+- Filters to active, tradeable markets
+- Returns basic metadata (title, asset IDs, resolution time)
+
+<Note>
+On-chain discovery does **not** include probability estimates, volume data, or images. Use the API for richer metadata.
+</Note>
+
+### API Discovery (Requires API Key)
+
+The `getLiveMarketsFromApi()` function fetches from Alpha's REST API:
+
+```typescript
+const markets = await client.getLiveMarketsFromApi();
+```
+
+This approach returns:
+- Current probabilities (`yesProb`, `noProb`)
+- Trading volume (`volume`)
+- Images, categories, featured status
+- Faster response times (cached data)
+
+<Tip>
+The SDK provides a smart default `getLiveMarkets()` that automatically uses the API if an `apiKey` is configured, otherwise falls back to on-chain discovery.
+</Tip>
+
+## Market Lifecycle
+
+<Steps>
+  <Step title="Created">
+    Market is deployed on-chain but not yet activated. No YES/NO tokens exist yet.
+  </Step>
+  
+  <Step title="Activated">
+    Market is live and tradeable. YES/NO tokens have been created.
+    
+    ```typescript
+    market.isLive === true
+    market.isResolved === false
+    ```
+  </Step>
+  
+  <Step title="Expired">
+    Market has passed its `endTs` (resolution timestamp) but has not been resolved yet.
+    
+    Trading typically continues until the oracle resolves the market.
+  </Step>
+  
+  <Step title="Resolved">
+    Oracle has determined the outcome. Winning tokens can be claimed for USDC.
+    
+    ```typescript
+    market.isResolved === true
+    market.resolution === 1  // YES won
+    market.resolution === 0  // NO won
+    ```
+    
+    Resolved markets are removed from the live markets list.
+  </Step>
+</Steps>
+
+## Global State Structure
+
+Every market smart contract stores its configuration in global state:
+
+```typescript
+export type MarketGlobalState = {
+  collateral_asset_id: number;      // USDC asset ID
+  yes_asset_id: number;              // YES token asset ID
+  no_asset_id: number;               // NO token asset ID
+  yes_supply: number;                // Total YES tokens minted
+  no_supply: number;                 // Total NO tokens minted
+  is_resolved: number;               // 0 = no, 1 = yes
+  is_activated: number;              // 0 = no, 1 = yes
+  outcome: number;                   // 0 = NO, 1 = YES
+  resolution_time: number;           // Unix timestamp (seconds)
+  fee_base_percent: number;          // Fee base in microunits
+  fee_timer_threshold: number;       // Time threshold for fee calculation
+  title: string;                     // Market title
+  rules: string;                     // Market rules/description
+  oracle_address: string;            // Address authorized to resolve
+  fee_address: string;               // Fee recipient address
+  market_friend_addr: string;        // Market friend address
+  escrow_cancel_address: string;     // Escrow cancel address
+};
+```
+
+<Accordion title="Reading Global State">
+  You can read a market's global state directly:
+  
+  ```typescript
+  import { getMarketGlobalState } from './utils/state';
+  
+  const state = await getMarketGlobalState(algodClient, marketAppId);
+  console.log('Market title:', state.title);
+  console.log('YES asset:', state.yes_asset_id);
+  console.log('Is resolved:', state.is_resolved);
+  ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Orderbook" icon="book" href="./orderbook">
+    Learn how limit orders and matching work
+  </Card>
+  <Card title="Positions" icon="coins" href="./positions">
+    Understand YES/NO tokens and split/merge mechanics
+  </Card>
+</CardGroup>

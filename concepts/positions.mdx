@@ -1,0 +1,397 @@
+---
+title: Positions
+description: Understanding YES/NO outcome tokens, split/merge mechanics, and claiming resolved markets
+---
+
+## Outcome Tokens
+
+Every Alpha prediction market has two outcome tokens:
+- **YES tokens**: Pay $1.00 if the event occurs
+- **NO tokens**: Pay $1.00 if the event does not occur
+
+Both are Algorand Standard Assets (ASAs) created by the market smart contract.
+
+### Token Naming Convention
+
+```
+Name: "Alpha Market {marketAppId} Yes"
+Unit: "ALPHA-{marketAppId}-Y"
+
+Name: "Alpha Market {marketAppId} No"
+Unit: "ALPHA-{marketAppId}-N"
+```
+
+Example for market app ID `3078581851`:
+- YES token name: `Alpha Market 3078581851 Yes`
+- NO token unit: `ALPHA-3078581851-N`
+
+<Info>
+The SDK automatically looks up YES and NO asset IDs from the market's global state. You never need to hardcode them.
+</Info>
+
+## Position Type
+
+The SDK uses a `Position` type to represent YES or NO:
+
+```typescript
+/** Position: 1 = Yes, 0 = No */
+export type Position = 0 | 1;
+```
+
+**Usage:**
+```typescript
+const YES: Position = 1;
+const NO: Position = 0;
+
+await client.createLimitOrder({
+  marketAppId,
+  position: YES,  // Trading YES tokens
+  price: 650000,
+  quantity: 1_000_000,
+  isBuying: true
+});
+```
+
+## Split Shares
+
+**Splitting** converts USDC into equal amounts of YES and NO tokens.
+
+### Formula
+
+```
+1 USDC → 1 YES + 1 NO
+```
+
+This is always a 1:1 conversion with no fees.
+
+### Example
+
+```typescript
+// Split $10 USDC into 10 YES + 10 NO tokens
+await client.splitShares({
+  marketAppId,
+  amount: 10_000_000  // 10 USDC in microunits
+});
+```
+
+**Result:**
+- Your USDC balance decreases by 10_000_000 microunits
+- Your YES token balance increases by 10_000_000 microunits
+- Your NO token balance increases by 10_000_000 microunits
+
+<Accordion title="Split Transaction Details">
+  From `src/modules/positions.ts`, the split operation builds an atomic transaction group:
+  
+  1. **(Optional)** Asset opt-in for YES token
+  2. **(Optional)** Asset opt-in for NO token
+  3. ALGO payment to market app (covers inner transaction fees)
+  4. USDC transfer to market app
+  5. App call: `market_app.split_shares()`
+  
+  ```typescript
+  export const splitShares = async (
+    config: AlphaClientConfig,
+    params: SplitSharesParams,
+  ): Promise<SplitMergeResult> => {
+    const { algodClient, signer, activeAddress, usdcAssetId } = config;
+    const { marketAppId, amount } = params;
+    
+    // ... opt-in logic ...
+    
+    // USDC transfer
+    const usdcTransfer = await algokit.transferAsset(
+      { from: signerAccount, to: marketAddress, amount, assetId: usdcAssetId },
+      algodClient,
+    );
+    
+    // split_shares() app call
+    const splitTxn = await marketClient.splitShares(
+      {},
+      { assets: [usdcAssetId, yesAssetId, noAssetId] },
+    );
+    
+    // Execute atomic group
+    const result = await atc.execute(algodClient, 4);
+    
+    return { success: true, txIds: result.txIDs };
+  };
+  ```
+</Accordion>
+
+### Why Split?
+
+Splitting is useful when you want to:
+1. **Sell one side** to take a position without buying from the orderbook
+2. **Provide liquidity** by posting both YES and NO limit orders
+3. **Arbitrage** price discrepancies between YES and NO markets
+
+<Tip>
+If YES is trading at $0.70 and NO is trading at $0.35, you can:
+1. Split $1.00 USDC → 1 YES + 1 NO
+2. Sell YES for $0.70
+3. Sell NO for $0.35
+4. Profit: $1.05 (5¢ arbitrage minus fees)
+</Tip>
+
+## Merge Shares
+
+**Merging** converts equal amounts of YES and NO tokens back into USDC.
+
+### Formula
+
+```
+1 YES + 1 NO → 1 USDC
+```
+
+This is always a 1:1 conversion with no fees.
+
+### Example
+
+```typescript
+// Merge 5 YES + 5 NO tokens into $5 USDC
+await client.mergeShares({
+  marketAppId,
+  amount: 5_000_000  // 5 tokens in microunits
+});
+```
+
+**Result:**
+- Your YES token balance decreases by 5_000_000 microunits
+- Your NO token balance decreases by 5_000_000 microunits
+- Your USDC balance increases by 5_000_000 microunits
+
+<Accordion title="Merge Transaction Details">
+  From `src/modules/positions.ts`, the merge operation builds an atomic transaction group:
+  
+  1. **(Optional)** Asset opt-in for USDC
+  2. ALGO payment to market app (covers inner transaction fees)
+  3. YES token transfer to market app
+  4. NO token transfer to market app
+  5. App call: `market_app.merge_shares()`
+  
+  ```typescript
+  export const mergeShares = async (
+    config: AlphaClientConfig,
+    params: MergeSharesParams,
+  ): Promise<SplitMergeResult> => {
+    const { algodClient, signer, activeAddress, usdcAssetId } = config;
+    const { marketAppId, amount } = params;
+    
+    // YES token transfer
+    const yesTransfer = await algokit.transferAsset(
+      { from: signerAccount, to: marketAddress, amount, assetId: yesAssetId },
+      algodClient,
+    );
+    
+    // NO token transfer
+    const noTransfer = await algokit.transferAsset(
+      { from: signerAccount, to: marketAddress, amount, assetId: noAssetId },
+      algodClient,
+    );
+    
+    // merge_shares() app call
+    const mergeTxn = await marketClient.mergeShares(
+      {},
+      { assets: [usdcAssetId] },
+    );
+    
+    // Execute atomic group
+    const result = await atc.execute(algodClient, 4);
+    
+    return { success: true, txIds: result.txIDs };
+  };
+  ```
+</Accordion>
+
+### Why Merge?
+
+Merging is useful when you:
+1. **Exit a position** without selling on the orderbook
+2. **Lock in profits** from both sides of a trade
+3. **Reduce risk** by converting tokens back to stablecoin
+
+<Note>
+You can only merge if you hold equal amounts of YES and NO tokens. If you have 10 YES and 5 NO, you can only merge 5 pairs (leaving 5 YES).
+</Note>
+
+## Claiming Resolved Markets
+
+After a market resolves, you can claim USDC by redeeming your outcome tokens.
+
+### Redemption Rules
+
+<Tabs>
+  <Tab title="Winning Tokens">
+    If you hold the winning outcome token, you get **$1.00 USDC per token**.
+    
+    ```typescript
+    // Market resolved YES
+    // You hold 10 YES tokens
+    await client.claim({
+      marketAppId,
+      assetId: yesAssetId
+    });
+    
+    // Result: +10 USDC
+    ```
+  </Tab>
+  
+  <Tab title="Losing Tokens">
+    If you hold the losing outcome token, you get **nothing**. Losing tokens are "burned" (returned to the contract).
+    
+    ```typescript
+    // Market resolved YES
+    // You hold 10 NO tokens
+    await client.claim({
+      marketAppId,
+      assetId: noAssetId
+    });
+    
+    // Result: 0 USDC (tokens burned)
+    ```
+  </Tab>
+  
+  <Tab title="Voided Markets">
+    If the market is voided (resolution cancelled), **all tokens redeem at $0.50**.
+    
+    ```typescript
+    // Market voided
+    // You hold 10 YES tokens
+    await client.claim({
+      marketAppId,
+      assetId: yesAssetId
+    });
+    
+    // Result: +5 USDC (50% redemption)
+    ```
+  </Tab>
+</Tabs>
+
+### Claim Example
+
+```typescript
+// Check if market is resolved
+const market = await client.getMarket(marketAppId);
+
+if (market.isResolved) {
+  console.log('Market resolved:', market.resolution === 1 ? 'YES' : 'NO');
+  
+  // Claim your tokens
+  const result = await client.claim({
+    marketAppId,
+    assetId: market.yesAssetId  // or noAssetId
+  });
+  
+  console.log('Claimed:', result.amountClaimed / 1_000_000, 'tokens');
+  console.log('Transaction:', result.txIds[0]);
+}
+```
+
+<Accordion title="Claim Transaction Details">
+  From `src/modules/positions.ts`, the claim operation builds an atomic transaction group:
+  
+  1. Token transfer to market app
+  2. App call: `market_app.claim()`
+  3. Asset opt-out (close remainder to market app)
+  
+  ```typescript
+  export const claim = async (
+    config: AlphaClientConfig,
+    params: ClaimParams,
+  ): Promise<ClaimResult> => {
+    // Get token balance
+    let tokenBalance = params.amount;
+    if (!tokenBalance) {
+      const accountInfo = await algodClient.accountInformation(activeAddress).do();
+      const asset = accountInfo.assets.find(a => a.assetId === assetId);
+      tokenBalance = asset ? Number(asset.amount) : 0;
+    }
+    
+    // Token transfer to market app
+    const tokenTransfer = await algokit.transferAsset(
+      { from: signerAccount, to: marketAddress, amount: tokenBalance, assetId },
+      algodClient,
+    );
+    
+    // claim() app call
+    const claimTxn = await marketClient.claim(
+      {},
+      { assets: [usdcAssetId, assetId] },
+    );
+    
+    // Opt-out: close remainder to market app
+    const closeOutTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: activeAddress,
+      receiver: marketAddress,
+      amount: 0,
+      assetIndex: assetId,
+      closeRemainderTo: marketAddress,
+      suggestedParams: sp,
+    });
+    
+    const result = await atc.execute(algodClient, 4);
+    
+    return { success: true, txIds: result.txIDs, amountClaimed: tokenBalance };
+  };
+  ```
+</Accordion>
+
+## Fetching Your Positions
+
+To see all your token holdings across all markets:
+
+```typescript
+const positions = await client.getPositions(walletAddress);
+
+for (const pos of positions) {
+  console.log('Market:', pos.title);
+  console.log('YES balance:', pos.yesBalance / 1_000_000);
+  console.log('NO balance:', pos.noBalance / 1_000_000);
+}
+```
+
+**Output:**
+```typescript
+export type WalletPosition = {
+  marketAppId: number;
+  title: string;
+  yesAssetId: number;
+  noAssetId: number;
+  yesBalance: number;  // in microunits
+  noBalance: number;   // in microunits
+};
+```
+
+<Note>
+`getPositions()` returns raw token balances. For cost basis and P&L calculations, use the Alpha API's position endpoints (requires API key).
+</Note>
+
+<Accordion title="How getPositions() Works">
+  From `src/modules/positions.ts`:
+  
+  1. **Read account info** to get all ASA holdings
+  2. **Filter to Alpha Market tokens** (unit name starts with `ALPHA-`)
+  3. **Parse market app ID** from asset name: `"Alpha Market {appId} Yes"`
+  4. **Look up market global state** to get both YES and NO asset IDs
+  5. **Group by market** and return positions
+  
+  ```typescript
+  // Parse market app ID from asset name
+  const match = assetName.match(/^Alpha Market (\d+) (Yes|No)$/);
+  if (!match) continue;
+  
+  const marketAppId = Number(match[1]);
+  const side = match[2] as 'Yes' | 'No';
+  ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Split Shares" icon="scissors" href="/positions/split-merge">
+    Learn how to split USDC into YES/NO tokens
+  </Card>
+  <Card title="Claim Resolved Markets" icon="trophy" href="/positions/claim">
+    Learn how to claim USDC from winning tokens
+  </Card>
+</CardGroup>

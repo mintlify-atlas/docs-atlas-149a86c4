@@ -1,0 +1,168 @@
+---
+title: "getOpenOrders"
+description: "Get open orders for a specific wallet on a market"
+---
+
+## Overview
+
+Fetches all open orders belonging to a specific wallet address for a given market. Returns detailed information about each order including price, quantity, filled amount, and escrow app ID.
+
+This method reads directly from the blockchain by querying escrow applications and filtering by owner address.
+
+## Method Signature
+
+```typescript
+async getOpenOrders(
+  marketAppId: number,
+  walletAddress?: string
+): Promise<OpenOrder[]>
+```
+
+## Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The market application ID on the Algorand blockchain
+</ParamField>
+
+<ParamField path="walletAddress" type="string">
+  The wallet address to query. If omitted, uses the client's `activeAddress`
+</ParamField>
+
+## Returns
+
+Returns an array of `OpenOrder` objects:
+
+<ResponseField name="escrowAppId" type="number">
+  The escrow application ID for this order
+</ResponseField>
+
+<ResponseField name="marketAppId" type="number">
+  The market application ID
+</ResponseField>
+
+<ResponseField name="position" type="0 | 1">
+  The position: `0` for NO, `1` for YES
+</ResponseField>
+
+<ResponseField name="side" type="number">
+  The order side: `0` for SELL, `1` for BUY
+</ResponseField>
+
+<ResponseField name="price" type="number">
+  Order price in microunits (e.g., 500000 = $0.50)
+</ResponseField>
+
+<ResponseField name="quantity" type="number">
+  Total order quantity in microunits (e.g., 1000000 = 1 share)
+</ResponseField>
+
+<ResponseField name="quantityFilled" type="number">
+  Amount already filled in microunits
+</ResponseField>
+
+<ResponseField name="slippage" type="number">
+  Slippage tolerance in microunits. `0` indicates a limit order
+</ResponseField>
+
+<ResponseField name="owner" type="string">
+  Algorand address of the order owner
+</ResponseField>
+
+## Example Usage
+
+### Get Open Orders for Active Wallet
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+});
+
+const markets = await client.getLiveMarkets();
+const marketAppId = markets[0].marketAppId;
+
+// Get orders for the active wallet
+const orders = await client.getOpenOrders(marketAppId);
+
+for (const order of orders) {
+  const side = order.side === 1 ? 'BUY' : 'SELL';
+  const position = order.position === 1 ? 'YES' : 'NO';
+  const price = order.price / 1e6;
+  const remaining = (order.quantity - order.quantityFilled) / 1e6;
+  
+  console.log(`${side} ${position} @ $${price}`);
+  console.log(`Remaining: ${remaining} shares`);
+  console.log(`Escrow: ${order.escrowAppId}`);
+}
+```
+
+### Get Open Orders for Another Wallet
+
+```typescript
+const walletAddress = 'ABC123...';
+const orders = await client.getOpenOrders(marketAppId, walletAddress);
+
+if (orders.length === 0) {
+  console.log('No open orders for this wallet');
+} else {
+  console.log(`Found ${orders.length} open order(s)`);
+}
+```
+
+### Cancel All Open Orders
+
+```typescript
+const orders = await client.getOpenOrders(marketAppId);
+
+for (const order of orders) {
+  await client.cancelOrder({
+    marketAppId: order.marketAppId,
+    escrowAppId: order.escrowAppId,
+    orderOwner: order.owner,
+  });
+  console.log(`Cancelled escrow ${order.escrowAppId}`);
+}
+```
+
+## Filtering and Processing
+
+```typescript
+const orders = await client.getOpenOrders(marketAppId);
+
+// Find all limit orders (slippage = 0)
+const limitOrders = orders.filter(o => o.slippage === 0);
+
+// Find all unfilled orders
+const unfilledOrders = orders.filter(o => o.quantityFilled === 0);
+
+// Find YES buy orders
+const yesBuyOrders = orders.filter(o => 
+  o.position === 1 && o.side === 1
+);
+
+// Calculate total value locked
+const totalValueLocked = orders.reduce((sum, order) => {
+  const remaining = order.quantity - order.quantityFilled;
+  return sum + (remaining * order.price / 1e6);
+}, 0);
+
+console.log(`Total value in open orders: $${totalValueLocked / 1e6}`);
+```
+
+## Notes
+
+- Only returns orders with unfilled quantity (`quantity > quantityFilled`)
+- Reads directly from blockchain state (no API key required)
+- Both limit orders and market orders are included
+- For orders across all markets, use [`getWalletOrdersFromApi`](/api/orderbook/wallet-orders)

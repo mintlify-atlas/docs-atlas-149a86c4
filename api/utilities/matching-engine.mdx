@@ -1,0 +1,300 @@
+---
+title: "Matching Engine"
+description: "Calculate matching counterparty orders from the orderbook"
+---
+
+## Overview
+
+The matching engine utility helps you find counterparty orders in the orderbook that can fill your order. It supports both:
+
+- **Direct matching**: Buy YES vs Sell YES
+- **Complementary matching**: Buy YES at 60¢ vs Buy NO at 40¢ (prices sum to $1.00)
+
+## calculateMatchingOrders
+
+Computes matching counterparty orders from an orderbook for a given order.
+
+```typescript
+import { calculateMatchingOrders } from '@alphaarcade/alpha-sdk';
+
+const matches = calculateMatchingOrders(
+  orderbook,
+  isBuying,
+  isYes,
+  quantity,
+  price,
+  slippageTolerance
+);
+```
+
+### Parameters
+
+<ParamField path="orderbook" type="Orderbook" required>
+  The full orderbook for the market. Contains `yes` and `no` sides, each with `bids` and `asks` arrays.
+</ParamField>
+
+<ParamField path="isBuying" type="boolean" required>
+  Whether the taker is buying (`true`) or selling (`false`)
+</ParamField>
+
+<ParamField path="isYes" type="boolean" required>
+  Whether the taker's position is Yes (`true`) or No (`false`)
+</ParamField>
+
+<ParamField path="quantity" type="number" required>
+  Desired quantity in microunits (e.g., 1,000,000 for 1 share)
+</ParamField>
+
+<ParamField path="price" type="number" required>
+  Desired price in microunits (e.g., 500,000 for $0.50)
+</ParamField>
+
+<ParamField path="slippageTolerance" type="number" required>
+  Maximum acceptable slippage in microunits (e.g., 50,000 for $0.05)
+</ParamField>
+
+### Returns
+
+<ResponseField name="matches" type="CounterpartyMatch[]">
+  Array of counterparty matches, sorted by best price, up to the requested quantity.
+
+  Each `CounterpartyMatch` contains:
+  - `escrowAppId` (number): Escrow app ID of the counterparty order
+  - `quantity` (number): Quantity available to match in microunits
+  - `owner` (string): Owner address of the counterparty order
+  - `price` (number): Effective fill price in microunits (accounts for complementary matching)
+</ResponseField>
+
+### Types
+
+#### Orderbook
+
+```typescript
+type Orderbook = {
+  yes: OrderbookSide;
+  no: OrderbookSide;
+};
+
+type OrderbookSide = {
+  bids: OrderbookEntry[];
+  asks: OrderbookEntry[];
+};
+
+type OrderbookEntry = {
+  price: number;        // Price in microunits
+  quantity: number;     // Remaining quantity in microunits
+  escrowAppId: number;  // Escrow app ID for this order
+  owner: string;        // Owner address
+};
+```
+
+#### CounterpartyMatch
+
+```typescript
+type CounterpartyMatch = {
+  escrowAppId: number;  // Escrow app ID of the counterparty order
+  quantity: number;     // Quantity available to match in microunits
+  owner: string;        // Owner address of the counterparty order
+  price: number;        // Effective fill price in microunits
+};
+```
+
+### Matching Algorithm
+
+The function implements the following matching logic:
+
+#### For Buy Orders
+
+**Buying YES**:
+1. Direct: Sell YES orders (asks on the YES side)
+2. Complementary: Buy NO orders (bids on the NO side), with price converted to `1_000_000 - noPrice`
+3. Sorted by ascending price (best price first)
+4. Filtered to `price <= targetPrice + slippage`
+
+**Buying NO**:
+1. Direct: Sell NO orders (asks on the NO side)
+2. Complementary: Buy YES orders (bids on the YES side), with price converted to `1_000_000 - yesPrice`
+3. Sorted by ascending price (best price first)
+4. Filtered to `price <= targetPrice + slippage`
+
+#### For Sell Orders
+
+**Selling YES**:
+1. Direct: Buy YES orders (bids on the YES side)
+2. Complementary: Sell NO orders (asks on the NO side), with price converted to `1_000_000 - noPrice`
+3. Sorted by descending price (best price first)
+4. Filtered to `price >= targetPrice - slippage`
+
+**Selling NO**:
+1. Direct: Buy NO orders (bids on the NO side)
+2. Complementary: Sell YES orders (asks on the YES side), with price converted to `1_000_000 - yesPrice`
+3. Sorted by descending price (best price first)
+4. Filtered to `price >= targetPrice - slippage`
+
+### Examples
+
+#### Buy YES at market price
+
+```typescript
+const orderbook: Orderbook = {
+  yes: {
+    bids: [
+      { price: 580_000, quantity: 500_000, escrowAppId: 101, owner: 'ADDR1...' }
+    ],
+    asks: [
+      { price: 620_000, quantity: 1_000_000, escrowAppId: 102, owner: 'ADDR2...' },
+      { price: 630_000, quantity: 500_000, escrowAppId: 103, owner: 'ADDR3...' }
+    ]
+  },
+  no: {
+    bids: [
+      { price: 390_000, quantity: 750_000, escrowAppId: 104, owner: 'ADDR4...' }
+    ],
+    asks: [
+      { price: 410_000, quantity: 600_000, escrowAppId: 105, owner: 'ADDR5...' }
+    ]
+  }
+};
+
+// Buy 1.5 YES shares at $0.65 with $0.05 slippage
+const matches = calculateMatchingOrders(
+  orderbook,
+  true,        // isBuying
+  true,        // isYes
+  1_500_000,   // quantity (1.5 shares)
+  650_000,     // price ($0.65)
+  50_000       // slippage ($0.05)
+);
+
+console.log(matches);
+// [
+//   {
+//     escrowAppId: 104,
+//     quantity: 750_000,
+//     owner: 'ADDR4...',
+//     price: 610_000  // Complementary: 1_000_000 - 390_000
+//   },
+//   {
+//     escrowAppId: 102,
+//     quantity: 750_000,  // Only 750k of the 1M available
+//     owner: 'ADDR2...',
+//     price: 620_000  // Direct match
+//   }
+// ]
+```
+
+#### Sell NO with limit
+
+```typescript
+const orderbook: Orderbook = {
+  yes: {
+    bids: [
+      { price: 700_000, quantity: 1_000_000, escrowAppId: 201, owner: 'ADDR6...' }
+    ],
+    asks: []
+  },
+  no: {
+    bids: [
+      { price: 310_000, quantity: 500_000, escrowAppId: 202, owner: 'ADDR7...' },
+      { price: 305_000, quantity: 500_000, escrowAppId: 203, owner: 'ADDR8...' }
+    ],
+    asks: []
+  }
+};
+
+// Sell 1 NO share at $0.30 with no slippage (limit order)
+const matches = calculateMatchingOrders(
+  orderbook,
+  false,       // isSelling (isBuying = false)
+  false,       // isNo
+  1_000_000,   // quantity (1 share)
+  300_000,     // price ($0.30)
+  0            // no slippage
+);
+
+console.log(matches);
+// [
+//   {
+//     escrowAppId: 202,
+//     quantity: 500_000,
+//     owner: 'ADDR7...',
+//     price: 310_000  // Direct match (best price)
+//   },
+//   {
+//     escrowAppId: 203,
+//     quantity: 500_000,
+//     owner: 'ADDR8...',
+//     price: 305_000  // Direct match (second best)
+//   }
+// ]
+```
+
+#### No matches available
+
+```typescript
+const orderbook: Orderbook = {
+  yes: {
+    bids: [{ price: 400_000, quantity: 1_000_000, escrowAppId: 301, owner: 'ADDR9...' }],
+    asks: [{ price: 600_000, quantity: 1_000_000, escrowAppId: 302, owner: 'ADDR10...' }]
+  },
+  no: {
+    bids: [],
+    asks: []
+  }
+};
+
+// Try to buy YES at $0.50 with $0.05 slippage
+// Best available is $0.60, outside slippage range
+const matches = calculateMatchingOrders(
+  orderbook,
+  true,
+  true,
+  1_000_000,
+  500_000,
+  50_000
+);
+
+console.log(matches); // => []
+```
+
+## Usage with Market Orders
+
+This function is typically used internally by `createMarketOrder()`, but you can also call it directly to preview matches before placing an order:
+
+```typescript
+import { AlphaClient } from '@alphaarcade/alpha-sdk';
+import { calculateMatchingOrders } from '@alphaarcade/alpha-sdk';
+
+const client = new AlphaClient(config);
+
+// Fetch the orderbook
+const orderbook = await client.getOrderbook(marketAppId);
+
+// Calculate matches
+const matches = calculateMatchingOrders(
+  orderbook,
+  true,        // buying
+  true,        // YES
+  1_000_000,   // 1 share
+  650_000,     // $0.65
+  50_000       // $0.05 slippage
+);
+
+// Preview the average fill price
+if (matches.length > 0) {
+  const totalQuantity = matches.reduce((sum, m) => sum + m.quantity, 0);
+  const weightedPrice = matches.reduce((sum, m) => sum + m.price * m.quantity, 0) / totalQuantity;
+  console.log(`Average fill price: $${(weightedPrice / 1_000_000).toFixed(4)}`);
+}
+
+// Place the order with pre-computed matches
+await client.createMarketOrder({
+  marketAppId,
+  position: 1,
+  price: 650_000,
+  quantity: 1_000_000,
+  isBuying: true,
+  slippage: 50_000,
+  matchingOrders: matches  // Pass pre-computed matches
+});
+```

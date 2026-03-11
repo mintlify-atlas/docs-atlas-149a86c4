@@ -1,0 +1,392 @@
+---
+title: Fees and Units
+description: Understanding microunits, fee structure, and price/quantity conventions in Alpha
+---
+
+## Microunits
+
+All prices and quantities in Alpha are expressed in **microunits** to avoid floating-point precision issues.
+
+### Conversion Rules
+
+```typescript
+1_000_000 microunits = $1.00 USD
+1_000_000 microunits = 1 share (outcome token)
+
+// Examples
+500_000 microunits = $0.50
+750_000 microunits = $0.75
+10_000_microunits = $0.01
+```
+
+### Why Microunits?
+
+<Tabs>
+  <Tab title="Precision">
+    JavaScript's `Number` type uses floating-point arithmetic, which can cause precision errors:
+    
+    ```javascript
+    // BAD: Floating-point precision loss
+    0.1 + 0.2 === 0.3  // false (actually 0.30000000000000004)
+    
+    // GOOD: Integer arithmetic is exact
+    100_000 + 200_000 === 300_000  // true
+    ```
+    
+    Microunits ensure all calculations are performed with integers.
+  </Tab>
+  
+  <Tab title="Blockchain Compatibility">
+    Algorand (and most blockchains) use integer amounts for all assets:
+    
+    - USDC on Algorand has 6 decimals
+    - Outcome tokens have 6 decimals
+    - All smart contract math uses integers
+    
+    Using microunits means the SDK's data structures match the on-chain representation exactly.
+  </Tab>
+  
+  <Tab title="API Consistency">
+    Both the SDK and Alpha's REST API use microunits for all price and quantity fields:
+    
+    ```json
+    {
+      "price": 650000,
+      "quantity": 1000000,
+      "volume": 5000000000
+    }
+    ```
+    
+    This ensures consistent behavior across all interfaces.
+  </Tab>
+</Tabs>
+
+### Converting to/from Dollars
+
+```typescript
+// Microunits → Dollars
+function toUSD(microunits: number): number {
+  return microunits / 1_000_000;
+}
+
+// Dollars → Microunits
+function fromUSD(dollars: number): number {
+  return Math.round(dollars * 1_000_000);
+}
+
+// Examples
+toUSD(650_000);      // 0.65
+fromUSD(0.65);       // 650000
+
+toUSD(1_000_000);    // 1.00
+fromUSD(1.00);       // 1000000
+```
+
+<Tip>
+Always use `Math.round()` when converting from dollars to avoid fractional microunits.
+</Tip>
+
+## Price Ranges
+
+Prices represent probabilities and are constrained to the range **[0, 1_000_000]**:
+
+```typescript
+0         = $0.00 (0% probability)
+500_000   = $0.50 (50% probability)
+1_000_000 = $1.00 (100% probability)
+```
+
+### Why [0, 1_000_000]?
+
+Outcome tokens have a fixed payout:
+- Winning token → $1.00 USDC
+- Losing token → $0.00 USDC
+
+Therefore, the price of a YES token is the probability that YES wins:
+- YES at $0.70 → 70% chance YES wins
+- NO at $0.30 → 30% chance NO wins
+
+<Note>
+YES price + NO price always equals $1.00 (in a fair market with no fees):
+```typescript
+yesPrice + noPrice = 1_000_000
+```
+</Note>
+
+### Price Examples
+
+```typescript
+// Create a limit order to buy YES at $0.65
+await client.createLimitOrder({
+  marketAppId,
+  position: 1,              // YES
+  price: 650_000,           // $0.65
+  quantity: 1_000_000,      // 1 share
+  isBuying: true
+});
+
+// Create a limit order to sell NO at $0.35
+await client.createLimitOrder({
+  marketAppId,
+  position: 0,              // NO
+  price: 350_000,           // $0.35
+  quantity: 5_000_000,      // 5 shares
+  isBuying: false
+});
+```
+
+## Fee Structure
+
+Alpha charges a **dynamic fee** based on the trade's distance from the market's current price.
+
+### Fee Formula
+
+From `src/utils/fees.ts`:
+
+```typescript
+fee = feeBase * quantity * price * (1 - price)
+```
+
+**Where:**
+- `feeBase`: Fee percentage in microunits (e.g. 70_000 = 7%)
+- `quantity`: Trade size in microunits
+- `price`: Trade price in microunits, normalized to [0, 1]
+
+<Info>
+The `price * (1 - price)` term means fees are highest at $0.50 (maximum uncertainty) and lowest near $0.00 or $1.00 (high certainty).
+</Info>
+
+### Fee Calculation Example
+
+```typescript
+import { calculateFee } from './utils/fees';
+
+// Trade: 1 share at $0.50, 7% fee base
+const fee = calculateFee(
+  1_000_000,  // quantity (1 share)
+  500_000,    // price ($0.50)
+  70_000      // feeBase (7%)
+);
+
+console.log('Fee:', fee);  // 17500 microunits = $0.0175
+```
+
+**Breakdown:**
+```typescript
+feeBase = 70_000 / 1_000_000 = 0.07
+price   = 500_000 / 1_000_000 = 0.50
+
+fee = 0.07 * 1_000_000 * 0.50 * (1 - 0.50)
+    = 0.07 * 1_000_000 * 0.50 * 0.50
+    = 0.07 * 1_000_000 * 0.25
+    = 17_500 microunits
+    = $0.0175
+```
+
+### Fee Calculation Function
+
+The SDK provides two fee calculation utilities:
+
+<Accordion title="calculateFee()">
+  ```typescript
+  /**
+   * Calculates the required fee amount in microunits.
+   *
+   * Formula: `fee = feeBase * quantity * price * (1 - price)`
+   *
+   * @param quantity - Order quantity in microunits
+   * @param price - Order price in microunits
+   * @param feeBase - Fee base in microunits
+   * @returns Fee amount in microunits (ceiling)
+   */
+  export const calculateFee = (
+    quantity: number | bigint,
+    price: number | bigint,
+    feeBase: number | bigint,
+  ): number => {
+    const q = new Decimal(quantity.toString());
+    const p = new Decimal(price.toString()).div(1_000_000);
+    const fb = new Decimal(feeBase.toString()).div(1_000_000);
+    
+    // fee = feeBase * quantity * price * (1 - price)
+    const fee = fb.mul(q).mul(p).mul(new Decimal(1).minus(p));
+    
+    return Math.ceil(fee.toNumber());
+  };
+  ```
+</Accordion>
+
+<Accordion title="calculateFeeFromTotal()">
+  ```typescript
+  /**
+   * Calculates the fee when given a total amount that includes the fee.
+   *
+   * @param totalAmount - Total amount in microunits including fee
+   * @param price - Price in microunits
+   * @param feeBase - Fee base in microunits
+   * @returns Fee amount in microunits (ceiling)
+   */
+  export const calculateFeeFromTotal = (
+    totalAmount: number | bigint,
+    price: number | bigint,
+    feeBase: number | bigint,
+  ): number => {
+    const total = new Decimal(totalAmount.toString());
+    const p = new Decimal(price.toString()).div(1_000_000);
+    const fb = new Decimal(feeBase.toString()).div(1_000_000);
+    
+    const denominator = p.mul(new Decimal(1).plus(fb.mul(new Decimal(1).minus(p))));
+    const quantity = total.div(denominator);
+    
+    const fee = fb.mul(quantity).mul(p).mul(new Decimal(1).minus(p));
+    return Math.ceil(fee.toNumber());
+  };
+  ```
+</Accordion>
+
+### Fee Base Values
+
+The `feeBase` parameter controls the fee percentage:
+
+```typescript
+70_000 microunits = 7% fee base (typical for Alpha markets)
+50_000 microunits = 5% fee base
+100_000 microunits = 10% fee base
+```
+
+Each market has its own `feeBase` stored in global state:
+
+```typescript
+const state = await getMarketGlobalState(algodClient, marketAppId);
+const feeBase = state.fee_base_percent;  // e.g. 70_000
+```
+
+<Note>
+The SDK automatically reads `feeBase` from the market's global state if you don't provide it manually.
+</Note>
+
+## Quantity Conventions
+
+Quantities represent the number of outcome tokens (shares) being traded.
+
+### Examples
+
+```typescript
+1_000_000 microunits = 1 share
+10_000_000 microunits = 10 shares
+500_000 microunits = 0.5 shares
+```
+
+### Total Cost Calculation
+
+The total USDC required for a buy order:
+
+```typescript
+totalCost = (quantity * price / 1_000_000) + fee
+```
+
+**Example:**
+```typescript
+quantity = 10_000_000  // 10 shares
+price    = 650_000     // $0.65
+feeBase  = 70_000      // 7%
+
+fee = calculateFee(quantity, price, feeBase);
+// fee = 159_250 microunits = $0.159250
+
+subtotal = (10_000_000 * 650_000) / 1_000_000;
+// subtotal = 6_500_000 microunits = $6.50
+
+totalCost = subtotal + fee;
+// totalCost = 6_659_250 microunits = $6.66
+```
+
+<Tip>
+The SDK handles all cost calculations automatically. You only need to specify `quantity` and `price`.
+</Tip>
+
+## Working with Microunits in Code
+
+### Helper Functions
+
+```typescript
+class MicrounitHelper {
+  static readonly PRECISION = 1_000_000;
+  
+  /** Convert microunits to USD */
+  static toUSD(microunits: number): number {
+    return microunits / this.PRECISION;
+  }
+  
+  /** Convert USD to microunits */
+  static fromUSD(usd: number): number {
+    return Math.round(usd * this.PRECISION);
+  }
+  
+  /** Format microunits as USD string */
+  static format(microunits: number, decimals: number = 2): string {
+    return `$${this.toUSD(microunits).toFixed(decimals)}`;
+  }
+  
+  /** Parse USD string to microunits */
+  static parse(usdString: string): number {
+    const cleaned = usdString.replace(/[$,]/g, '');
+    return this.fromUSD(parseFloat(cleaned));
+  }
+}
+
+// Usage
+MicrounitHelper.toUSD(650_000);           // 0.65
+MicrounitHelper.fromUSD(0.65);            // 650000
+MicrounitHelper.format(650_000);          // "$0.65"
+MicrounitHelper.parse("$0.65");           // 650000
+```
+
+### Display Formatting
+
+```typescript
+// Orderbook display
+function formatOrderbookEntry(entry: OrderbookEntry) {
+  return {
+    price: `$${(entry.price / 1_000_000).toFixed(2)}`,
+    quantity: `${(entry.quantity / 1_000_000).toFixed(2)} shares`,
+    total: `$${(entry.price * entry.quantity / 1_000_000_000_000).toFixed(2)}`
+  };
+}
+
+// Example output
+// { price: "$0.65", quantity: "10.00 shares", total: "$6.50" }
+```
+
+### Input Validation
+
+```typescript
+function validatePrice(price: number): void {
+  if (!Number.isInteger(price)) {
+    throw new Error('Price must be an integer in microunits');
+  }
+  if (price < 0 || price > 1_000_000) {
+    throw new Error('Price must be between 0 and 1_000_000');
+  }
+}
+
+function validateQuantity(quantity: number): void {
+  if (!Number.isInteger(quantity)) {
+    throw new Error('Quantity must be an integer in microunits');
+  }
+  if (quantity <= 0) {
+    throw new Error('Quantity must be positive');
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Create Orders" icon="plus" href="/trading/create-order">
+    Learn how to create orders with proper price/quantity values
+  </Card>
+  <Card title="Fee Optimization" icon="chart-line" href="/advanced/fee-optimization">
+    Learn strategies to minimize trading fees
+  </Card>
+</CardGroup>

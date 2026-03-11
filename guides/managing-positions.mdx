@@ -1,0 +1,310 @@
+---
+title: 'Managing Positions'
+description: 'Split USDC into outcome tokens, merge them back, and claim winnings'
+---
+
+Alpha Markets use a **complete-set model** where 1 USDC can be split into 1 Yes token + 1 No token. This guide shows you how to manage your positions through split, merge, and claim operations.
+
+## Understanding Complete Sets
+
+A **complete set** consists of:
+- 1 Yes outcome token
+- 1 No outcome token
+- Always worth exactly 1 USDC combined
+
+### Key Operations
+
+- **Split**: Convert USDC → Yes + No tokens
+- **Merge**: Convert Yes + No tokens → USDC
+- **Claim**: Redeem winning tokens for USDC after market resolution
+
+<Tip>
+  Splitting and merging is instant and reversible. Use it to acquire tokens without trading!
+</Tip>
+
+## Splitting Shares
+
+Splitting converts USDC into equal amounts of Yes and No tokens.
+
+### When to Split
+
+- You want to sell one outcome without buying the other
+- You're providing liquidity to both sides
+- You want to arbitrage between token prices
+
+### Example: Split USDC
+
+<Steps>
+  <Step title="Initialize the client">
+    ```typescript
+    import algosdk from 'algosdk';
+    import { AlphaClient } from '@alpha-arcade/sdk';
+
+    const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+    const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+    const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+    const client = new AlphaClient({
+      algodClient,
+      indexerClient,
+      signer: algosdk.makeBasicAccountTransactionSigner(account),
+      activeAddress: account.addr.toString(),
+      matcherAppId: 741347297,
+      usdcAssetId: 31566704,
+      apiKey: process.env.ALPHA_API_KEY!,
+    });
+    ```
+  </Step>
+
+  <Step title="Split shares">
+    Split $0.50 USDC into 0.5 Yes + 0.5 No tokens:
+
+    ```typescript
+    const marketAppId = 12345678; // Your target market
+
+    const splitResult = await client.splitShares({
+      marketAppId,
+      amount: 500_000, // $0.50 (6 decimals)
+    });
+
+    console.log(`Split complete! Round: ${splitResult.confirmedRound}`);
+    ```
+  </Step>
+
+  <Step title="Verify your positions">
+    Check your new token balances:
+
+    ```typescript
+    const positions = await client.getPositions();
+    const pos = positions.find((p) => p.marketAppId === marketAppId);
+
+    if (pos) {
+      console.log(`YES: ${pos.yesBalance / 1e6} shares`);
+      console.log(`NO: ${pos.noBalance / 1e6} shares`);
+    }
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  You must opt-in to the market's outcome token assets before splitting. The SDK handles this automatically if you're using the latest version.
+</Warning>
+
+## Merging Shares
+
+Merging converts matching Yes and No tokens back into USDC.
+
+### When to Merge
+
+- You acquired both sides through trades
+- You want to exit a position without selling
+- You're closing out a market-making strategy
+
+### Example: Merge Tokens
+
+```typescript
+const mergeResult = await client.mergeShares({
+  marketAppId,
+  amount: 500_000, // Merge 0.5 Yes + 0.5 No → $0.50 USDC
+});
+
+console.log(`Merge complete! Round: ${mergeResult.confirmedRound}`);
+```
+
+<Tip>
+  Merging requires you to hold **equal amounts** of Yes and No tokens. If you have 2 Yes and 1 No, you can only merge 1 complete set.
+</Tip>
+
+## Claiming Winnings
+
+After a market resolves, you can claim your winning tokens for USDC.
+
+### Resolution Outcomes
+
+- **Yes wins**: Each Yes token = 1 USDC, No tokens = 0
+- **No wins**: Each No token = 1 USDC, Yes tokens = 0
+- **Invalid**: All tokens refunded proportionally
+
+### Example: Claim After Resolution
+
+```typescript
+const claimResult = await client.claim({
+  marketAppId,
+});
+
+console.log(`Claimed ${claimResult.usdcAmount / 1e6} USDC`);
+console.log(`Transaction: ${claimResult.txId}`);
+```
+
+<Warning>
+  You can only claim **after** the market has been resolved by the oracle. Attempting to claim before resolution will fail.
+</Warning>
+
+## Viewing Your Positions
+
+Fetch all your positions across all markets:
+
+```typescript
+const positions = await client.getPositions();
+
+if (positions.length === 0) {
+  console.log('No positions found.');
+} else {
+  for (const pos of positions) {
+    console.log(`Market: ${pos.marketAppId}`);
+    console.log(`  YES (${pos.yesAssetId}): ${pos.yesBalance / 1e6} shares`);
+    console.log(`  NO  (${pos.noAssetId}): ${pos.noBalance / 1e6} shares`);
+  }
+}
+```
+
+### Position Object
+
+Each position contains:
+
+```typescript
+interface WalletPosition {
+  marketAppId: number;   // The market application ID
+  yesAssetId: number;    // ASA ID for Yes tokens
+  noAssetId: number;     // ASA ID for No tokens
+  yesBalance: number;    // Yes token balance (6 decimals)
+  noBalance: number;     // No token balance (6 decimals)
+}
+```
+
+## Complete Example: Split and Merge
+
+<CodeGroup>
+
+```typescript Split & Merge
+import dotenv from 'dotenv';
+import algosdk from 'algosdk';
+import { AlphaClient } from '@alpha-arcade/sdk';
+
+dotenv.config();
+
+const main = async () => {
+  const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+  const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+  const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+  const client = new AlphaClient({
+    algodClient,
+    indexerClient,
+    signer: algosdk.makeBasicAccountTransactionSigner(account),
+    activeAddress: account.addr.toString(),
+    matcherAppId: 741347297,
+    usdcAssetId: 31566704,
+    apiKey: process.env.ALPHA_API_KEY!,
+  });
+
+  const marketAppId = Number(process.env.TEST_MARKET_APP_ID);
+  if (!marketAppId) {
+    console.error('Set TEST_MARKET_APP_ID in .env');
+    return;
+  }
+
+  // Split $0.50 USDC into YES + NO tokens
+  console.log('Splitting $0.50 USDC...');
+  const splitResult = await client.splitShares({
+    marketAppId,
+    amount: 500_000, // $0.50
+  });
+  console.log(`Split done! Round: ${splitResult.confirmedRound}`);
+
+  // Check positions
+  const positions = await client.getPositions();
+  const pos = positions.find((p) => p.marketAppId === marketAppId);
+  if (pos) {
+    console.log(`YES balance: ${pos.yesBalance / 1e6}, NO balance: ${pos.noBalance / 1e6}`);
+  }
+
+  // Merge back
+  console.log('Merging back...');
+  const mergeResult = await client.mergeShares({
+    marketAppId,
+    amount: 500_000,
+  });
+  console.log(`Merge done! Round: ${mergeResult.confirmedRound}`);
+};
+
+main().catch(console.error);
+```
+
+```typescript View Positions
+import dotenv from 'dotenv';
+import algosdk from 'algosdk';
+import { AlphaClient } from '@alpha-arcade/sdk';
+
+dotenv.config();
+
+const main = async () => {
+  const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+  const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+  const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+  const client = new AlphaClient({
+    algodClient,
+    indexerClient,
+    signer: algosdk.makeBasicAccountTransactionSigner(account),
+    activeAddress: account.addr.toString(),
+    matcherAppId: 741347297,
+    usdcAssetId: 31566704,
+    apiKey: process.env.ALPHA_API_KEY!,
+  });
+
+  console.log(`Wallet: ${account.addr.toString()}`);
+  console.log('Fetching positions...\n');
+
+  const positions = await client.getPositions();
+
+  if (positions.length === 0) {
+    console.log('No positions found.');
+    return;
+  }
+
+  for (const pos of positions) {
+    console.log(`Market App ID: ${pos.marketAppId}`);
+    console.log(`  YES (${pos.yesAssetId}): ${pos.yesBalance / 1e6} shares`);
+    console.log(`  NO  (${pos.noAssetId}): ${pos.noBalance / 1e6} shares`);
+    console.log();
+  }
+};
+
+main().catch(console.error);
+```
+
+</CodeGroup>
+
+## Position Management Strategies
+
+### Arbitrage Example
+
+If Yes trades at $0.40 and No trades at $0.50:
+
+1. Split $1.00 USDC → 1 Yes + 1 No
+2. Sell 1 Yes at $0.40 = $0.40 received
+3. Sell 1 No at $0.50 = $0.50 received
+4. Total: $0.90 vs $1.00 cost = -$0.10 loss
+
+<Warning>
+  This is a **losing** trade! Only arbitrage when Yes + No prices **exceed** $1.00 (accounting for fees).
+</Warning>
+
+### Market Making Example
+
+1. Split $10 USDC → 10 Yes + 10 No
+2. Place limit sell: 10 Yes at $0.55
+3. Place limit sell: 10 No at $0.55
+4. If both fill: $11 revenue - $10 cost = $1 profit (before fees)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Placing Orders" icon="chart-line" href="/guides/placing-orders">
+    Learn to trade outcome tokens on the orderbook
+  </Card>
+  <Card title="Building Bots" icon="robot" href="/guides/building-bots">
+    Automate your trading strategies
+  </Card>
+</CardGroup>

@@ -1,0 +1,183 @@
+---
+title: "getWalletOrdersFromApi"
+description: "Get all open orders for a wallet across all markets using the Alpha API"
+---
+
+## Overview
+
+Fetches all open orders for a wallet address across every live market on Alpha Arcade. This method uses the Alpha REST API to efficiently retrieve orders without scanning the entire blockchain.
+
+**Requires an API key.** Retrieve your API key from the [Alpha Arcade Account page](https://alphaarcade.com/account).
+
+## Method Signature
+
+```typescript
+async getWalletOrdersFromApi(walletAddress: string): Promise<OpenOrder[]>
+```
+
+## Parameters
+
+<ParamField path="walletAddress" type="string" required>
+  The Algorand wallet address to fetch orders for
+</ParamField>
+
+## Returns
+
+Returns an array of `OpenOrder` objects from all markets:
+
+<ResponseField name="escrowAppId" type="number">
+  The escrow application ID for this order
+</ResponseField>
+
+<ResponseField name="marketAppId" type="number">
+  The market application ID
+</ResponseField>
+
+<ResponseField name="position" type="0 | 1">
+  The position: `0` for NO, `1` for YES
+</ResponseField>
+
+<ResponseField name="side" type="number">
+  The order side: `0` for SELL, `1` for BUY
+</ResponseField>
+
+<ResponseField name="price" type="number">
+  Order price in microunits (e.g., 500000 = $0.50)
+</ResponseField>
+
+<ResponseField name="quantity" type="number">
+  Total order quantity in microunits (e.g., 1000000 = 1 share)
+</ResponseField>
+
+<ResponseField name="quantityFilled" type="number">
+  Amount already filled in microunits
+</ResponseField>
+
+<ResponseField name="slippage" type="number">
+  Slippage tolerance in microunits. `0` indicates a limit order
+</ResponseField>
+
+<ResponseField name="owner" type="string">
+  Algorand address of the order owner
+</ResponseField>
+
+## Example Usage
+
+### Basic Usage
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.TEST_MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+  apiKey: process.env.ALPHA_API_KEY!, // Required
+});
+
+const walletAddress = account.addr.toString();
+const orders = await client.getWalletOrdersFromApi(walletAddress);
+
+if (orders.length === 0) {
+  console.log('No open orders found.');
+} else {
+  console.log(`Found ${orders.length} open order(s)`);
+}
+```
+
+### Display Order Details
+
+```typescript
+const orders = await client.getWalletOrdersFromApi(walletAddress);
+
+for (const order of orders) {
+  const side = order.side === 1 ? 'BUY' : 'SELL';
+  const position = order.position === 1 ? 'YES' : 'NO';
+  const price = order.price / 1e6;
+  const qty = order.quantity / 1e6;
+  const filled = order.quantityFilled / 1e6;
+  const remaining = qty - filled;
+
+  console.log(`Escrow ${order.escrowAppId} | Market ${order.marketAppId}`);
+  console.log(`  ${side} ${position} @ $${price}`);
+  console.log(`  Qty: ${qty} | Filled: ${filled} | Remaining: ${remaining}`);
+  console.log();
+}
+```
+
+### Group Orders by Market
+
+```typescript
+const orders = await client.getWalletOrdersFromApi(walletAddress);
+
+// Group by market
+const ordersByMarket = orders.reduce((acc, order) => {
+  const marketId = order.marketAppId;
+  if (!acc[marketId]) {
+    acc[marketId] = [];
+  }
+  acc[marketId].push(order);
+  return acc;
+}, {} as Record<number, typeof orders>);
+
+// Display summary
+for (const [marketId, marketOrders] of Object.entries(ordersByMarket)) {
+  console.log(`Market ${marketId}: ${marketOrders.length} order(s)`);
+}
+```
+
+### Calculate Total Exposure
+
+```typescript
+const orders = await client.getWalletOrdersFromApi(walletAddress);
+
+let totalExposure = 0;
+
+for (const order of orders) {
+  const remaining = order.quantity - order.quantityFilled;
+  const orderValue = (remaining * order.price) / 1e12; // Convert to dollars
+  totalExposure += orderValue;
+}
+
+console.log(`Total exposure in open orders: $${totalExposure.toFixed(2)}`);
+```
+
+## Differences from getOpenOrders
+
+| Feature | `getOpenOrders` | `getWalletOrdersFromApi` |
+|---------|----------------|-------------------------|
+| **Scope** | Single market | All markets |
+| **Data source** | On-chain (indexer) | Alpha REST API |
+| **Requires API key** | No | Yes |
+| **Performance** | Slower for one market | Faster for multiple markets |
+| **Use case** | Market-specific queries | Portfolio overview |
+
+## Error Handling
+
+```typescript
+try {
+  const orders = await client.getWalletOrdersFromApi(walletAddress);
+  console.log(`Found ${orders.length} orders`);
+} catch (error) {
+  if (error.message.includes('apiKey is required')) {
+    console.error('Please set ALPHA_API_KEY in your environment');
+  } else {
+    console.error('API error:', error);
+  }
+}
+```
+
+## Notes
+
+- **Requires API key**: You must configure `apiKey` in the `AlphaClient` constructor
+- **Automatic pagination**: The method handles pagination internally and returns all results
+- **Cross-market queries**: Efficiently fetches orders from all markets in a single call
+- **Live data**: Returns real-time order data from the Alpha API

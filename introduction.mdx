@@ -1,0 +1,130 @@
+---
+title: "Introduction"
+description: "Build trading applications on Algorand prediction markets with the Alpha SDK"
+---
+
+# Welcome to Alpha SDK
+
+The **Alpha SDK** is a TypeScript library for interacting with **Alpha Market** — a decentralized prediction market platform built on Algorand. Build trading bots, manage positions, place orders, and read live orderbook data directly from the blockchain.
+
+## What is Alpha Market?
+
+Alpha Market is an on-chain prediction market where users can trade on the outcomes of future events. Every market has two outcome tokens (YES and NO), and prices reflect the probability of each outcome. All trading happens on-chain via smart contracts.
+
+## What You Can Build
+
+<CardGroup cols={2}>
+  <Card title="Trading Bots" icon="robot">
+    Automated strategies that scan markets and execute trades based on your logic
+  </Card>
+  <Card title="Portfolio Managers" icon="chart-line">
+    Track positions across multiple markets and manage risk
+  </Card>
+  <Card title="Market Makers" icon="chart-candlestick">
+    Provide liquidity by placing orders on both sides of the orderbook
+  </Card>
+  <Card title="Analytics Tools" icon="magnifying-glass-chart">
+    Fetch orderbook data, market metrics, and trade history
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### Full Trading Capabilities
+- **Limit orders** — Set your price and wait for matches
+- **Market orders** — Execute immediately against the orderbook
+- **Order management** — Cancel or amend existing orders
+- **Position management** — Split, merge, and claim tokens
+
+### On-Chain & API Access
+- **Works without an API key** — Read markets and place orders directly from the blockchain
+- **Enhanced with API** — Get richer market data including images, categories, volume, and liquidity rewards
+- **Real-time orderbook** — Fetch live bids and asks from the chain
+
+### Developer-Friendly
+- **TypeScript native** — Full type safety and IntelliSense support
+- **Simple setup** — Just 3 dependencies and 5 lines of config
+- **Comprehensive examples** — Runnable scripts for every major use case
+- **Production-ready** — Built on `algosdk` and AlgoKit Utils
+
+## Core Concepts
+
+### Markets
+Each market represents a question with a binary outcome (YES or NO). Markets have:
+- Two outcome tokens (ASA assets on Algorand)
+- A resolution date when the outcome is determined
+- An on-chain orderbook managed by smart contracts
+- Unique `marketAppId` for identification
+
+### Orders
+Orders sit on the orderbook and can be:
+- **Buy orders** (bids) — Offering USDC for outcome tokens
+- **Sell orders** (asks) — Offering outcome tokens for USDC
+- **Limit orders** — Posted at your specified price
+- **Market orders** — Match immediately at the best available price
+
+### Positions
+You can hold positions in:
+- **USDC** — The settlement currency (mainnet ASA ID: `31566704`)
+- **YES tokens** — Pay out $1 if the market resolves YES
+- **NO tokens** — Pay out $1 if the market resolves NO
+- **Split/Merge** — Convert 1 USDC ↔ 1 YES + 1 NO at any time
+
+## Units & Conventions
+
+All monetary values in the SDK use **microunits** (1 million microunits = $1.00 or 1 share):
+
+| Value | Microunits | Display |
+|-------|------------|----------|
+| Price | `500_000` | $0.50 |
+| Quantity | `2_000_000` | 2 shares |
+| Fee | `70_000` | 7% |
+
+**Position & Side encoding:**
+- Position: `1` = YES, `0` = NO
+- Side: `1` = Buy, `0` = Sell
+
+<Note>
+  The SDK handles all transaction construction, fee calculation, and smart contract interaction automatically. You just call high-level methods like `createLimitOrder()` or `getOrderbook()`.
+</Note>
+
+## Why Algorand?
+
+Alpha Market runs on Algorand because it offers:
+- **Fast finality** — Blocks confirm in ~3 seconds
+- **Low fees** — Pennies per transaction
+- **Native assets** — Outcome tokens are first-class assets (ASAs)
+- **Smart contracts** — Pure on-chain orderbook and matching
+
+## API Key (Optional)
+
+An API key is **not required** to use the SDK. Without one, you can:
+- Fetch all live markets from the blockchain
+- Place and cancel orders
+- Read orderbooks
+- Manage positions
+
+With an API key, you get additional features:
+- Market images and metadata
+- Category and tag filtering
+- Volume and probability data
+- Liquidity reward markets
+- Wallet order lookups across all markets
+
+<Tip>
+  To get an API key:
+  1. Sign up at [alphaarcade.com](https://alphaarcade.com)
+  2. Go to **Account** → **Partners** → **Create API key**
+  3. Pass it to `AlphaClient` via the `apiKey` config option
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install the SDK and dependencies
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first trading application in 5 minutes
+  </Card>
+</CardGroup>

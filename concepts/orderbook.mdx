@@ -1,0 +1,292 @@
+---
+title: Orderbook
+description: How Alpha's on-chain orderbook works, including bids, asks, and order matching
+---
+
+## Overview
+
+Alpha uses a **fully on-chain orderbook** where every limit order is a smart contract (escrow app) on the Algorand blockchain. There are no off-chain components—all matching happens on-chain via atomic transactions.
+
+## Orderbook Structure
+
+The orderbook is organized by outcome (YES/NO) and side (bid/ask):
+
+```typescript
+export type Orderbook = {
+  yes: OrderbookSide;  // YES token orders
+  no: OrderbookSide;   // NO token orders
+};
+
+export type OrderbookSide = {
+  bids: OrderbookEntry[];  // Buy orders
+  asks: OrderbookEntry[];  // Sell orders
+};
+
+export type OrderbookEntry = {
+  /** Price in microunits (e.g. 500000 = $0.50) */
+  price: number;
+  /** Remaining quantity in microunits */
+  quantity: number;
+  /** Escrow app ID for this order */
+  escrowAppId: number;
+  /** Owner address */
+  owner: string;
+};
+```
+
+<Info>
+Each `OrderbookEntry` represents a single limit order. Multiple orders at the same price level appear as separate entries.
+</Info>
+
+## Fetching the Orderbook
+
+The SDK provides `getOrderbook()` to read all open limit orders for a market:
+
+```typescript
+const orderbook = await client.getOrderbook(marketAppId);
+
+console.log('YES bids:', orderbook.yes.bids);
+console.log('YES asks:', orderbook.yes.asks);
+console.log('NO bids:', orderbook.no.bids);
+console.log('NO asks:', orderbook.no.asks);
+```
+
+<Accordion title="How getOrderbook() Works">
+  From `src/modules/orderbook.ts`:
+  
+  1. **Discover all escrow apps** created by the market app address
+  2. **Read global state** for each escrow app
+  3. **Filter to open limit orders** (unfilled quantity > 0, slippage === 0)
+  4. **Categorize by position and side**:
+     - `position: 1, side: 1` → YES bids
+     - `position: 1, side: 0` → YES asks
+     - `position: 0, side: 1` → NO bids
+     - `position: 0, side: 0` → NO asks
+  
+  ```typescript
+  const isOpenLimitOrder = (o: EscrowApp) =>
+    (o.globalState.quantity ?? 0) > (o.globalState.quantity_filled ?? 0) &&
+    o.globalState.slippage === 0;
+  ```
+</Accordion>
+
+## Understanding Bids and Asks
+
+<Tabs>
+  <Tab title="YES Token Orders">
+    **YES Bids** (Buying YES)
+    - User wants to buy YES tokens at a specific price
+    - Escrow holds USDC collateral
+    - Matches against YES asks (sellers)
+    
+    **YES Asks** (Selling YES)
+    - User wants to sell YES tokens at a specific price
+    - Escrow holds YES tokens
+    - Matches against YES bids (buyers)
+    
+    Example:
+    ```typescript
+    // Buy 10 YES tokens at $0.65
+    await client.createLimitOrder({
+      marketAppId,
+      position: 1,      // YES
+      price: 650000,    // $0.65
+      quantity: 10_000_000,
+      isBuying: true
+    });
+    ```
+  </Tab>
+  
+  <Tab title="NO Token Orders">
+    **NO Bids** (Buying NO)
+    - User wants to buy NO tokens at a specific price
+    - Escrow holds USDC collateral
+    - Matches against NO asks (sellers)
+    
+    **NO Asks** (Selling NO)
+    - User wants to sell NO tokens at a specific price
+    - Escrow holds NO tokens
+    - Matches against NO bids (buyers)
+    
+    Example:
+    ```typescript
+    // Sell 5 NO tokens at $0.35
+    await client.createLimitOrder({
+      marketAppId,
+      position: 0,      // NO
+      price: 350000,    // $0.35
+      quantity: 5_000_000,
+      isBuying: false
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Complementary Matching
+
+Alpha supports **complementary matching**: a YES buy at price `p` can match against a NO sell at price `1 - p`.
+
+This works because:
+- 1 YES + 1 NO = 1 USDC (always)
+- Buying YES at $0.70 is economically equivalent to selling NO at $0.30
+
+### Example
+
+```typescript
+// Alice: Buy YES at $0.65
+await client.createLimitOrder({
+  marketAppId,
+  position: 1,
+  price: 650000,
+  quantity: 1_000_000,
+  isBuying: true
+});
+
+// Bob: Sell NO at $0.35 (complementary to Alice's order)
+await client.createLimitOrder({
+  marketAppId,
+  position: 0,
+  price: 350000,  // 1_000_000 - 650000 = 350000
+  quantity: 1_000_000,
+  isBuying: false
+});
+```
+
+**Result**: Alice and Bob's orders match instantly because `650000 + 350000 = 1_000_000` ($1.00).
+
+<Tip>
+The SDK's matching engine automatically detects complementary orders. See `src/utils/matching.ts` for the implementation.
+</Tip>
+
+## Order Matching Mechanics
+
+When you place a market order, the SDK:
+
+1. **Fetches the orderbook** for the specified position (YES/NO)
+2. **Finds matching orders** (opposite side, compatible price)
+3. **Builds an atomic transaction group**:
+   - One transaction per matched order
+   - Calls the matcher contract to execute the swap
+   - Updates escrow global state (quantity filled)
+4. **Creates a limit order** for any unfilled quantity
+
+<Accordion title="Matching Algorithm">
+  From `src/utils/matching.ts`, the matching engine:
+  
+  - Sorts bids by price (highest first)
+  - Sorts asks by price (lowest first)
+  - Matches greedily until quantity is filled or no compatible orders remain
+  - Accounts for fees when calculating effective prices
+  
+  ```typescript
+  // Find counterparty orders
+  const counterpartyOrders = position === 1 ? orderbook.yes.asks : orderbook.no.bids;
+  
+  // Sort by best price
+  const sorted = [...counterpartyOrders].sort((a, b) => 
+    isBuying ? a.price - b.price : b.price - a.price
+  );
+  
+  // Match until filled
+  for (const order of sorted) {
+    if (remainingQty <= 0) break;
+    if (!isCompatiblePrice(order.price, limitPrice)) break;
+    
+    const matchQty = Math.min(remainingQty, order.quantity);
+    matches.push({
+      escrowAppId: order.escrowAppId,
+      quantity: matchQty,
+      owner: order.owner
+    });
+    remainingQty -= matchQty;
+  }
+  ```
+</Accordion>
+
+## Escrow Global State
+
+Every limit order is stored in an escrow app with global state:
+
+```typescript
+export type EscrowGlobalState = {
+  position?: number;          // 0 = NO, 1 = YES
+  side?: number;              // 0 = SELL, 1 = BUY
+  price?: number;             // Price in microunits
+  quantity?: number;          // Total quantity in microunits
+  quantity_filled?: number;   // Filled quantity in microunits
+  slippage?: number;          // Slippage in microunits (0 = limit order)
+  owner?: string;             // Owner address
+  market_app_id?: number;     // Market app ID
+  asset_listed?: number;      // Listed asset ID
+  fee_timer_start?: number;   // Fee timer start timestamp
+};
+```
+
+**Key fields:**
+- `slippage === 0` → Limit order (sits on the book)
+- `slippage > 0` → Market order (matches immediately or fails)
+- `quantity - quantity_filled` → Remaining quantity available
+
+## Aggregated Orderbook
+
+For display purposes, you can aggregate multiple orders at the same price level:
+
+```typescript
+export type AggregatedOrderbookEntry = {
+  price: number;        // Price in microunits
+  quantity: number;     // Total quantity at this level
+  orderCount: number;   // Number of orders at this level
+};
+
+export type AggregatedOrderbook = {
+  yes: AggregatedOrderbookSide;
+  no: AggregatedOrderbookSide;
+};
+```
+
+<Note>
+The SDK does not provide a built-in aggregation function. You'll need to implement this yourself by grouping `OrderbookEntry` items by price.
+</Note>
+
+## Open Orders for a Wallet
+
+To fetch all open orders belonging to a specific wallet:
+
+```typescript
+const openOrders = await client.getOpenOrders(marketAppId, walletAddress);
+
+for (const order of openOrders) {
+  console.log(`Escrow: ${order.escrowAppId}`);
+  console.log(`Position: ${order.position === 1 ? 'YES' : 'NO'}`);
+  console.log(`Side: ${order.side === 1 ? 'BUY' : 'SELL'}`);
+  console.log(`Price: $${order.price / 1_000_000}`);
+  console.log(`Filled: ${order.quantityFilled} / ${order.quantity}`);
+}
+```
+
+<Accordion title="OpenOrder Type">
+  ```typescript
+  export type OpenOrder = {
+    escrowAppId: number;       // Unique order ID
+    marketAppId: number;       // Market this order is for
+    position: Position;        // 0=No, 1=Yes
+    side: number;              // 0=Sell, 1=Buy
+    price: number;             // Price in microunits
+    quantity: number;          // Total quantity
+    quantityFilled: number;    // Filled quantity
+    slippage: number;          // 0 = limit order
+    owner: string;             // Owner address
+  };
+  ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Create Limit Order" icon="plus" href="/trading/create-order">
+    Learn how to place a limit order
+  </Card>
+  <Card title="Cancel Order" icon="xmark" href="/trading/cancel-order">
+    Learn how to cancel an open order
+  </Card>
+</CardGroup>

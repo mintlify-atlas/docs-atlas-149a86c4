@@ -1,0 +1,115 @@
+---
+title: "amendOrder"
+description: "Edit an existing unfilled order's price, quantity, or slippage in-place"
+---
+
+## Method Signature
+
+```typescript
+async amendOrder(params: AmendOrderParams): Promise<AmendOrderResult>
+```
+
+Amends (edits) an existing unfilled order in-place. Cheaper and faster than cancelling and recreating. The escrow contract adjusts collateral automatically — sends you a refund if the new value is lower, or requires extra funds if higher.
+
+**Only works on orders with zero quantity filled.**
+
+## Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The market application ID on Algorand
+</ParamField>
+
+<ParamField path="escrowAppId" type="number" required>
+  The escrow app ID of the order to amend
+</ParamField>
+
+<ParamField path="price" type="number" required>
+  New price in microunits (e.g., `500_000` = $0.50)
+</ParamField>
+
+<ParamField path="quantity" type="number" required>
+  New quantity in microunits (e.g., `1_000_000` = 1 share)
+</ParamField>
+
+<ParamField path="slippage" type="number">
+  New slippage in microunits (default: `0`). Use `0` for limit orders.
+</ParamField>
+
+## Return Type
+
+```typescript
+type AmendOrderResult = {
+  success: boolean;
+  txIds: string[];
+  confirmedRound: number;
+}
+```
+
+<ResponseField name="success" type="boolean">
+  Whether the amendment succeeded. Always `true` if the method completes without throwing an error.
+</ResponseField>
+
+<ResponseField name="txIds" type="string[]">
+  Array of transaction IDs from the amendment
+</ResponseField>
+
+<ResponseField name="confirmedRound" type="number">
+  The confirmed round number on the blockchain
+</ResponseField>
+
+## Example
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+});
+
+const marketAppId = 123456789;
+
+// Create an order
+const order = await client.createLimitOrder({
+  marketAppId,
+  position: 1,
+  price: 100_000,      // $0.10
+  quantity: 1_000_000, // 1 share
+  isBuying: true,
+});
+
+console.log(`Created order: ${order.escrowAppId}`);
+
+// Change your mind — amend it to $0.20 for 2 shares
+const result = await client.amendOrder({
+  marketAppId,
+  escrowAppId: order.escrowAppId,
+  price: 200_000,      // New price: $0.20
+  quantity: 2_000_000, // New quantity: 2 shares
+  slippage: 0,         // Keep as limit order
+});
+
+console.log(`Amended: ${result.success}`);
+```
+
+## Behavior Notes
+
+- **Unfilled Orders Only**: You can only amend orders that have **zero** quantity filled. If the order has been partially matched, you must cancel it and create a new one.
+- **Automatic Collateral Adjustment**:
+  - **Increased collateral needed**: The SDK sends the additional USDC or outcome tokens to the escrow.
+  - **Decreased collateral needed**: The escrow performs an inner transaction to refund the excess back to you (the SDK budgets extra transaction fees automatically).
+- **Transaction Fees**: 
+  - ~1,000 microAlgos if additional collateral is required
+  - ~2,000 microAlgos if a refund is issued (to cover the inner refund transaction)
+- **Preserves Escrow**: The order keeps the same `escrowAppId` — it's not deleted and recreated.
+- **Gas Efficiency**: Amending is cheaper than cancelling + recreating (saves ~8,000 microAlgos in fees + the MBR).
+- **Error Handling**: Throws an error if `quantity_filled > 0`.

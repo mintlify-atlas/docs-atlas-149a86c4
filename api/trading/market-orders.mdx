@@ -1,0 +1,129 @@
+---
+title: "createMarketOrder"
+description: "Create a market order with automatic matching against the orderbook"
+---
+
+## Method Signature
+
+```typescript
+async createMarketOrder(params: CreateMarketOrderParams): Promise<CreateOrderResult>
+```
+
+Creates a market order with automatic matching. Fetches the live orderbook, finds the best counterparty orders within your slippage tolerance, then creates the order and proposes matches in a single atomic transaction group.
+
+## Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The market application ID on Algorand
+</ParamField>
+
+<ParamField path="position" type="0 | 1" required>
+  The position to trade: `1` for Yes, `0` for No
+</ParamField>
+
+<ParamField path="price" type="number" required>
+  Price in microunits (e.g., `500_000` = $0.50). This is your target price — actual fills may be at this price ± slippage.
+</ParamField>
+
+<ParamField path="quantity" type="number" required>
+  Quantity in microunits (e.g., `1_000_000` = 1 share)
+</ParamField>
+
+<ParamField path="isBuying" type="boolean" required>
+  Whether this is a buy order (`true`) or sell order (`false`)
+</ParamField>
+
+<ParamField path="slippage" type="number" required>
+  Slippage tolerance in microunits (e.g., `50_000` = $0.05). The order will match against counterparty orders within `price ± slippage`.
+</ParamField>
+
+<ParamField path="feeBase" type="number">
+  Fee base in microunits (e.g., `70_000` = 7%). If omitted, reads from market's on-chain global state.
+</ParamField>
+
+<ParamField path="matchingOrders" type="CounterpartyMatch[]">
+  Pre-computed matching orders. If omitted, the SDK automatically fetches the orderbook and computes matches. Advanced use only.
+</ParamField>
+
+## Return Type
+
+```typescript
+type CreateOrderResult = {
+  escrowAppId: number;
+  txIds: string[];
+  confirmedRound: number;
+  matchedQuantity?: number;
+  matchedPrice?: number;
+}
+```
+
+<ResponseField name="escrowAppId" type="number">
+  The escrow app ID of the newly created order. If the order is fully matched, this escrow may have zero remaining quantity.
+</ResponseField>
+
+<ResponseField name="txIds" type="string[]">
+  Array of transaction IDs from the atomic group (includes order creation + all match proposals)
+</ResponseField>
+
+<ResponseField name="confirmedRound" type="number">
+  The confirmed round number on the blockchain
+</ResponseField>
+
+<ResponseField name="matchedQuantity" type="number">
+  Total quantity that was matched in microunits. May be less than the requested quantity if insufficient liquidity exists within your slippage tolerance.
+</ResponseField>
+
+<ResponseField name="matchedPrice" type="number">
+  Volume-weighted average fill price in microunits. This is the actual price you paid/received, accounting for complementary matching.
+</ResponseField>
+
+## Example
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+  apiKey: process.env.ALPHA_API_KEY!,
+});
+
+const markets = await client.getLiveMarkets();
+const market = markets[0];
+
+// Check the orderbook first
+const book = await client.getOrderbook(market.marketAppId);
+const bestAsk = book.yes.asks.sort((a, b) => a.price - b.price)[0];
+console.log(`Best ask: $${bestAsk.price / 1e6}`);
+
+// Place a market order to buy 1 Yes share
+const result = await client.createMarketOrder({
+  marketAppId: market.marketAppId,
+  position: 1,          // Yes
+  price: bestAsk.price,
+  quantity: 1_000_000,  // 1 share
+  isBuying: true,
+  slippage: 50_000,     // $0.05 slippage tolerance
+});
+
+console.log(`Order created! Escrow: ${result.escrowAppId}`);
+console.log(`Matched: ${(result.matchedQuantity ?? 0) / 1e6} shares at $${(result.matchedPrice ?? 0) / 1e6}`);
+```
+
+## Behavior Notes
+
+- **Automatic Matching**: The SDK fetches the orderbook, identifies all counterparty orders within your slippage tolerance, and proposes matches in a single atomic transaction.
+- **Slippage Protection**: Only matches against orders within `price ± slippage`. If insufficient liquidity exists, the order partially fills and the remainder sits on the orderbook.
+- **Atomic Execution**: Order creation and all matches execute atomically — either all succeed or all fail.
+- **Complementary Matching**: The SDK handles complementary matching logic (e.g., buying YES at $0.60 is equivalent to selling NO at $0.40).
+- **Price Improvement**: If better prices exist on the orderbook, you get them. The `matchedPrice` reflects the volume-weighted average of all fills.
+- **Gas Fees**: Each match proposal costs ~10,000 microAlgos in transaction fees. The SDK handles this automatically.

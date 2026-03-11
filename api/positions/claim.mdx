@@ -1,0 +1,133 @@
+---
+title: "Claim Resolved Tokens"
+description: "Redeem outcome tokens for USDC after market resolution"
+---
+
+## Overview
+
+The `claim` method redeems outcome tokens (YES or NO) for USDC after a market has resolved.
+
+### Resolution Outcomes
+
+- **Winning tokens**: Redeemed 1:1 for USDC (1 winning token = $1.00 USDC)
+- **Voided market**: Redeemed at half value (1 token = $0.50 USDC)
+- **Losing tokens**: Burned with no USDC returned
+
+---
+
+## claim
+
+Claims USDC from a resolved market by redeeming outcome tokens.
+
+```typescript
+await client.claim({
+  marketAppId: 123456789,
+  assetId: 987654321, // YES or NO token ASA ID
+  amount: 5_000_000,  // Optional: defaults to entire balance
+});
+```
+
+### Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The market app ID
+</ParamField>
+
+<ParamField path="assetId" type="number" required>
+  The outcome token ASA ID to redeem (either YES or NO token)
+</ParamField>
+
+<ParamField path="amount" type="number">
+  Amount to claim in microunits. If omitted, claims your entire balance of this token.
+</ParamField>
+
+### Returns
+
+Returns a `Promise<ClaimResult>`:
+
+<ResponseField name="success" type="boolean">
+  Whether the claim succeeded
+</ResponseField>
+
+<ResponseField name="txIds" type="string[]">
+  Transaction IDs from the atomic group
+</ResponseField>
+
+<ResponseField name="confirmedRound" type="number">
+  Confirmed round number
+</ResponseField>
+
+<ResponseField name="amountClaimed" type="number">
+  Amount of tokens claimed in microunits
+</ResponseField>
+
+### Example
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+});
+
+const marketAppId = 123456789;
+
+// Get the market to check resolution
+const market = await client.getMarketOnChain(marketAppId);
+
+if (!market?.isResolved) {
+  console.log('Market not resolved yet');
+  return;
+}
+
+// Get your positions
+const positions = await client.getPositions();
+const position = positions.find((p) => p.marketAppId === marketAppId);
+
+if (!position) {
+  console.log('No position in this market');
+  return;
+}
+
+// Claim YES tokens if you have any
+if (position.yesBalance > 0) {
+  const result = await client.claim({
+    marketAppId,
+    assetId: position.yesAssetId,
+  });
+  console.log(`Claimed ${result.amountClaimed / 1e6} YES tokens`);
+  console.log(`USDC received: depends on resolution outcome`);
+}
+
+// Claim NO tokens if you have any
+if (position.noBalance > 0) {
+  const result = await client.claim({
+    marketAppId,
+    assetId: position.noAssetId,
+  });
+  console.log(`Claimed ${result.amountClaimed / 1e6} NO tokens`);
+}
+```
+
+### Workflow
+
+1. Wait for market resolution
+2. Check your positions using [`getPositions()`](/api/positions/get-positions)
+3. Call `claim()` for each token type (YES/NO) you hold
+4. Receive USDC based on the resolution outcome
+
+### Notes
+
+- The claim operation automatically opts you out of the token asset
+- You must claim winning and losing tokens separately
+- For voided markets, both YES and NO tokens are redeemed at 50% value

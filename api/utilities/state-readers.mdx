@@ -1,0 +1,380 @@
+---
+title: "State Readers"
+description: "Read on-chain state from market and escrow apps"
+---
+
+## Overview
+
+The state reader utilities help you fetch and decode the global state of market and escrow apps from the Algorand blockchain. These functions handle the low-level details of:
+
+- Fetching raw application state from algod/indexer
+- Decoding base64-encoded keys and values
+- Converting byte arrays to Algorand addresses
+- Handling both v2 and v3 API response formats
+
+## getMarketGlobalState
+
+Reads the global state of a market app from the chain using the algod client.
+
+```typescript
+import { getMarketGlobalState } from '@alphaarcade/alpha-sdk';
+import algosdk from 'algosdk';
+
+const algodClient = new algosdk.Algodv2(token, server, port);
+const state = await getMarketGlobalState(algodClient, marketAppId);
+```
+
+### Parameters
+
+<ParamField path="algodClient" type="Algodv2" required>
+  Algorand algod client instance from the `algosdk` package
+</ParamField>
+
+<ParamField path="marketAppId" type="number" required>
+  The market app ID to query
+</ParamField>
+
+### Returns
+
+<ResponseField name="state" type="MarketGlobalState">
+  Decoded market global state object
+</ResponseField>
+
+### MarketGlobalState Type
+
+```typescript
+type MarketGlobalState = {
+  collateral_asset_id: number;      // USDC ASA ID
+  yes_asset_id: number;             // YES token ASA ID
+  no_asset_id: number;              // NO token ASA ID
+  yes_supply: number;               // Total YES tokens minted
+  no_supply: number;                // Total NO tokens minted
+  is_resolved: number;              // 1 if resolved, 0 otherwise
+  is_activated: number;             // 1 if activated, 0 otherwise
+  outcome: number;                  // 1 = YES won, 0 = NO won, -1 = not resolved
+  resolution_time: number;          // Unix timestamp (seconds)
+  fee_base_percent: number;         // Fee base in microunits (e.g., 70000 = 7%)
+  fee_timer_threshold: number;      // Fee timer threshold in seconds
+  title: string;                    // Market title
+  rules: string;                    // Market rules/description
+  oracle_address: string;           // Oracle Algorand address
+  fee_address: string;              // Fee recipient address
+  market_friend_addr: string;       // Market friend address
+  escrow_cancel_address: string;    // Escrow cancel address
+};
+```
+
+### Examples
+
+#### Basic usage
+
+```typescript
+import { getMarketGlobalState } from '@alphaarcade/alpha-sdk';
+import algosdk from 'algosdk';
+
+const algodClient = new algosdk.Algodv2(
+  '',
+  'https://mainnet-api.4160.nodely.io',
+  443
+);
+
+const marketAppId = 123456789;
+const state = await getMarketGlobalState(algodClient, marketAppId);
+
+console.log(`Title: ${state.title}`);
+console.log(`YES Asset: ${state.yes_asset_id}`);
+console.log(`NO Asset: ${state.no_asset_id}`);
+console.log(`Fee Base: ${state.fee_base_percent / 10000}%`);
+```
+
+#### Check if market is resolved
+
+```typescript
+const state = await getMarketGlobalState(algodClient, marketAppId);
+
+if (state.is_resolved === 1) {
+  const winner = state.outcome === 1 ? 'YES' : 'NO';
+  console.log(`Market resolved: ${winner} won`);
+  console.log(`Winning asset ID: ${winner === 'YES' ? state.yes_asset_id : state.no_asset_id}`);
+} else {
+  console.log('Market is still open');
+  const endDate = new Date(state.resolution_time * 1000);
+  console.log(`Resolution time: ${endDate.toLocaleString()}`);
+}
+```
+
+#### Check market liquidity
+
+```typescript
+const state = await getMarketGlobalState(algodClient, marketAppId);
+
+const totalSupply = state.yes_supply + state.no_supply;
+console.log(`Total minted: $${(totalSupply / 1_000_000).toFixed(2)}`);
+console.log(`YES supply: ${(state.yes_supply / 1_000_000).toFixed(6)} shares`);
+console.log(`NO supply: ${(state.no_supply / 1_000_000).toFixed(6)} shares`);
+```
+
+## getEscrowGlobalState
+
+Reads the global state of an escrow app via the indexer. Escrow apps represent individual open orders on the orderbook.
+
+```typescript
+import { getEscrowGlobalState } from '@alphaarcade/alpha-sdk';
+import algosdk from 'algosdk';
+
+const indexerClient = new algosdk.Indexer(token, server, port);
+const state = await getEscrowGlobalState(indexerClient, escrowAppId);
+```
+
+### Parameters
+
+<ParamField path="indexerClient" type="Indexer" required>
+  Algorand indexer client instance from the `algosdk` package
+</ParamField>
+
+<ParamField path="escrowAppId" type="number" required>
+  The escrow app ID to query
+</ParamField>
+
+### Returns
+
+<ResponseField name="state" type="EscrowGlobalState">
+  Decoded escrow global state object
+</ResponseField>
+
+### EscrowGlobalState Type
+
+```typescript
+type EscrowGlobalState = {
+  position?: number;           // 1 = YES, 0 = NO
+  side?: number;               // 1 = BUY, 0 = SELL
+  price?: number;              // Price in microunits
+  quantity?: number;           // Total quantity in microunits
+  quantity_filled?: number;    // Filled quantity in microunits
+  slippage?: number;           // Slippage in microunits (0 = limit order)
+  owner?: string;              // Owner address
+  market_app_id?: number;      // Parent market app ID
+  asset_listed?: number;       // Listed asset ID
+  fee_timer_start?: number;    // Fee timer start timestamp
+};
+```
+
+### Examples
+
+#### Read order details
+
+```typescript
+import { getEscrowGlobalState } from '@alphaarcade/alpha-sdk';
+import algosdk from 'algosdk';
+
+const indexerClient = new algosdk.Indexer(
+  '',
+  'https://mainnet-idx.4160.nodely.io',
+  443
+);
+
+const escrowAppId = 987654321;
+const state = await getEscrowGlobalState(indexerClient, escrowAppId);
+
+const position = state.position === 1 ? 'YES' : 'NO';
+const side = state.side === 1 ? 'BUY' : 'SELL';
+const price = (state.price! / 1_000_000).toFixed(2);
+const remaining = ((state.quantity! - state.quantity_filled!) / 1_000_000).toFixed(2);
+
+console.log(`${side} ${position} @ $${price}`);
+console.log(`Remaining: ${remaining} shares`);
+console.log(`Owner: ${state.owner}`);
+```
+
+#### Check order fill status
+
+```typescript
+const state = await getEscrowGlobalState(indexerClient, escrowAppId);
+
+const total = state.quantity || 0;
+const filled = state.quantity_filled || 0;
+const fillPercentage = total > 0 ? (filled / total) * 100 : 0;
+
+console.log(`Fill status: ${fillPercentage.toFixed(1)}%`);
+console.log(`Filled: ${(filled / 1_000_000).toFixed(2)} shares`);
+console.log(`Remaining: ${((total - filled) / 1_000_000).toFixed(2)} shares`);
+
+if (filled === total) {
+  console.log('Order fully filled');
+} else if (filled > 0) {
+  console.log('Order partially filled');
+} else {
+  console.log('Order unfilled');
+}
+```
+
+#### Determine order type
+
+```typescript
+const state = await getEscrowGlobalState(indexerClient, escrowAppId);
+
+const orderType = (state.slippage || 0) === 0 ? 'LIMIT' : 'MARKET';
+console.log(`Order type: ${orderType}`);
+
+if (orderType === 'MARKET') {
+  const slippagePct = ((state.slippage! / 1_000_000) * 100).toFixed(2);
+  console.log(`Slippage tolerance: ${slippagePct}%`);
+}
+```
+
+## checkAssetOptIn
+
+Checks if an address has opted into an Algorand Standard Asset (ASA). This is required before an account can receive tokens on Algorand.
+
+```typescript
+import { checkAssetOptIn } from '@alphaarcade/alpha-sdk';
+import algosdk from 'algosdk';
+
+const algodClient = new algosdk.Algodv2(token, server, port);
+const isOptedIn = await checkAssetOptIn(algodClient, address, assetId);
+```
+
+### Parameters
+
+<ParamField path="algodClient" type="Algodv2" required>
+  Algorand algod client instance from the `algosdk` package
+</ParamField>
+
+<ParamField path="address" type="string" required>
+  The Algorand address to check
+</ParamField>
+
+<ParamField path="assetId" type="number" required>
+  The ASA ID to check (e.g., YES token, NO token, or USDC)
+</ParamField>
+
+### Returns
+
+<ResponseField name="isOptedIn" type="boolean">
+  `true` if the address has opted into the asset, `false` otherwise
+</ResponseField>
+
+### Examples
+
+#### Check if opted into market tokens
+
+```typescript
+import { checkAssetOptIn, getMarketGlobalState } from '@alphaarcade/alpha-sdk';
+import algosdk from 'algosdk';
+
+const algodClient = new algosdk.Algodv2(
+  '',
+  'https://mainnet-api.4160.nodely.io',
+  443
+);
+
+const address = 'YOUR_ADDRESS_HERE';
+const marketAppId = 123456789;
+
+// Get market assets
+const state = await getMarketGlobalState(algodClient, marketAppId);
+
+// Check opt-in status
+const yesOptedIn = await checkAssetOptIn(algodClient, address, state.yes_asset_id);
+const noOptedIn = await checkAssetOptIn(algodClient, address, state.no_asset_id);
+const usdcOptedIn = await checkAssetOptIn(algodClient, address, state.collateral_asset_id);
+
+console.log(`YES token opt-in: ${yesOptedIn}`);
+console.log(`NO token opt-in: ${noOptedIn}`);
+console.log(`USDC opt-in: ${usdcOptedIn}`);
+```
+
+#### Validate before trading
+
+```typescript
+import { checkAssetOptIn, getMarketGlobalState } from '@alphaarcade/alpha-sdk';
+
+const validateMarketAccess = async (
+  algodClient: algosdk.Algodv2,
+  address: string,
+  marketAppId: number
+): Promise<{ canTrade: boolean; missingAssets: string[] }> => {
+  const state = await getMarketGlobalState(algodClient, marketAppId);
+  const missingAssets: string[] = [];
+
+  const usdcOptedIn = await checkAssetOptIn(algodClient, address, state.collateral_asset_id);
+  if (!usdcOptedIn) missingAssets.push('USDC');
+
+  const yesOptedIn = await checkAssetOptIn(algodClient, address, state.yes_asset_id);
+  if (!yesOptedIn) missingAssets.push('YES');
+
+  const noOptedIn = await checkAssetOptIn(algodClient, address, state.no_asset_id);
+  if (!noOptedIn) missingAssets.push('NO');
+
+  return {
+    canTrade: missingAssets.length === 0,
+    missingAssets
+  };
+};
+
+// Usage
+const validation = await validateMarketAccess(algodClient, userAddress, marketAppId);
+if (!validation.canTrade) {
+  console.log(`Please opt-in to: ${validation.missingAssets.join(', ')}`);
+} else {
+  console.log('Ready to trade!');
+}
+```
+
+#### Batch check multiple assets
+
+```typescript
+const checkMultipleAssets = async (
+  algodClient: algosdk.Algodv2,
+  address: string,
+  assetIds: number[]
+): Promise<Map<number, boolean>> => {
+  const results = new Map<number, boolean>();
+  
+  await Promise.all(
+    assetIds.map(async (assetId) => {
+      const isOptedIn = await checkAssetOptIn(algodClient, address, assetId);
+      results.set(assetId, isOptedIn);
+    })
+  );
+  
+  return results;
+};
+
+// Check multiple markets at once
+const assetIds = [31566704, 987654321, 987654322]; // USDC, YES, NO
+const optInStatus = await checkMultipleAssets(algodClient, address, assetIds);
+
+optInStatus.forEach((isOptedIn, assetId) => {
+  console.log(`Asset ${assetId}: ${isOptedIn ? 'opted in' : 'not opted in'}`);
+});
+```
+
+## Error Handling
+
+All state reader functions may throw errors if:
+
+- The app ID does not exist
+- The network request fails
+- The app state is malformed
+
+Always wrap calls in try-catch blocks:
+
+```typescript
+try {
+  const state = await getMarketGlobalState(algodClient, marketAppId);
+  console.log(state.title);
+} catch (error) {
+  console.error('Failed to fetch market state:', error);
+  // Handle error (e.g., show user message, retry, etc.)
+}
+```
+
+## API Version Compatibility
+
+These utilities handle both v2 (kebab-case) and v3 (camelCase) Algorand API response formats automatically:
+
+- **v2**: `global-state`, `asset-id`
+- **v3**: `globalState`, `assetId`
+
+You don't need to worry about which API version you're using — the functions will work with both.

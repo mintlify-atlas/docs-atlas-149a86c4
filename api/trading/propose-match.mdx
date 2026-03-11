@@ -1,0 +1,111 @@
+---
+title: "proposeMatch"
+description: "Propose a match between an existing maker order and yourself as taker"
+---
+
+## Method Signature
+
+```typescript
+async proposeMatch(params: ProposeMatchParams): Promise<ProposeMatchResult>
+```
+
+Proposes a match between an existing maker order and yourself as the taker. This creates a new taker escrow and matches it against the maker's existing order. The matcher app orchestrates the inner transactions to settle the trade.
+
+**Use this for advanced matching scenarios** where you want to explicitly specify which orders to match against.
+
+## Parameters
+
+<ParamField path="marketAppId" type="number" required>
+  The market application ID on Algorand
+</ParamField>
+
+<ParamField path="makerEscrowAppId" type="number" required>
+  The escrow app ID of the existing maker order to match against
+</ParamField>
+
+<ParamField path="makerAddress" type="string" required>
+  The Algorand address of the maker (order owner)
+</ParamField>
+
+<ParamField path="quantityMatched" type="number" required>
+  Quantity to match in microunits (e.g., `1_000_000` = 1 share). Must not exceed the maker order's unfilled quantity.
+</ParamField>
+
+## Return Type
+
+```typescript
+type ProposeMatchResult = {
+  success: boolean;
+  txIds: string[];
+  confirmedRound: number;
+}
+```
+
+<ResponseField name="success" type="boolean">
+  Whether the match succeeded. Always `true` if the method completes without throwing an error.
+</ResponseField>
+
+<ResponseField name="txIds" type="string[]">
+  Array of transaction IDs from the match proposal (includes ALGO payment to maker escrow + match call)
+</ResponseField>
+
+<ResponseField name="confirmedRound" type="number">
+  The confirmed round number on the blockchain
+</ResponseField>
+
+## Example
+
+```typescript
+import { AlphaClient } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
+
+const account = algosdk.mnemonicToSecretKey(process.env.MNEMONIC!);
+const algodClient = new algosdk.Algodv2('', 'https://mainnet-api.algonode.cloud', 443);
+const indexerClient = new algosdk.Indexer('', 'https://mainnet-idx.algonode.cloud', 443);
+
+const client = new AlphaClient({
+  algodClient,
+  indexerClient,
+  signer: algosdk.makeBasicAccountTransactionSigner(account),
+  activeAddress: account.addr.toString(),
+  matcherAppId: 741347297,
+  usdcAssetId: 31566704,
+});
+
+const marketAppId = 123456789;
+
+// Fetch the orderbook to find a maker order
+const book = await client.getOrderbook(marketAppId);
+const bestAsk = book.yes.asks.sort((a, b) => a.price - b.price)[0];
+
+if (bestAsk) {
+  console.log(`Matching against order ${bestAsk.escrowAppId} at $${bestAsk.price / 1e6}`);
+
+  const result = await client.proposeMatch({
+    marketAppId,
+    makerEscrowAppId: bestAsk.escrowAppId,
+    makerAddress: bestAsk.owner,
+    quantityMatched: 1_000_000, // Match 1 share
+  });
+
+  console.log(`Match proposed: ${result.success}`);
+  console.log(`Tx IDs: ${result.txIds.join(', ')}`);
+}
+```
+
+## Behavior Notes
+
+- **Manual Matching**: Unlike `createMarketOrder`, which automatically finds and matches against multiple orders, `proposeMatch` requires you to manually specify the exact maker order.
+- **No Order Creation**: This method does **not** create a new escrow for you. It's typically used when:
+  - You want to match against a specific counterparty
+  - You're building custom matching logic
+  - You're integrating with external price feeds or strategies
+- **Transaction Structure**:
+  1. ALGO payment to the maker escrow (~2,000 microAlgos) to cover inner transaction fees
+  2. Call to the matcher app's `proposeAMatch` method
+- **Fees**:
+  - ~2,000 microAlgos ALGO payment to maker escrow
+  - ~10,000 microAlgos for the matcher app call
+- **Atomicity**: The match proposal is atomic — either the entire trade settles or it fails.
+- **Complementary Matching**: The matcher app handles complementary order matching logic (e.g., YES buy vs NO sell at complementary prices).
+- **Quantity Validation**: The `quantityMatched` must not exceed the maker order's unfilled quantity, or the transaction will fail.
