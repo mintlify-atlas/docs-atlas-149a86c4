@@ -1,0 +1,137 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Alpha SDK",
+  "projectDescription": "TypeScript SDK for trading on Alpha Market prediction markets on Algorand",
+  "theme": "aspen",
+  "primaryColor": "#12efd4",
+  "lightColor": "#180e9a",
+  "darkColor": "#040404",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/markets",
+              "concepts/orderbook",
+              "concepts/positions",
+              "concepts/fees-and-units"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/placing-orders",
+              "guides/managing-positions",
+              "guides/building-bots",
+              "guides/error-handling"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Client",
+            "pages": [
+              "api/alpha-client",
+              "api/configuration"
+            ]
+          },
+          {
+            "group": "Trading",
+            "pages": [
+              "api/trading/limit-orders",
+              "api/trading/market-orders",
+              "api/trading/cancel-order",
+              "api/trading/amend-order",
+              "api/trading/propose-match"
+            ]
+          },
+          {
+            "group": "Markets",
+            "pages": [
+              "api/markets/get-markets",
+              "api/markets/reward-markets",
+              "api/markets/on-chain-vs-api"
+            ]
+          },
+          {
+            "group": "Orderbook",
+            "pages": [
+              "api/orderbook/get-orderbook",
+              "api/orderbook/open-orders",
+              "api/orderbook/wallet-orders"
+            ]
+          },
+          {
+            "group": "Positions",
+            "pages": [
+              "api/positions/split-merge",
+              "api/positions/claim",
+              "api/positions/get-positions"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/utilities/fee-calculation",
+              "api/utilities/matching-engine",
+              "api/utilities/state-readers"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": [
+              "api/types"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Create limit and market orders on prediction markets",
+    "Manage positions with split/merge operations",
+    "Access live orderbook data on-chain",
+    "Build automated trading bots",
+    "Support for both API and on-chain market discovery",
+    "Claim resolved market tokens",
+    "Amend orders without canceling",
+    "Get liquidity reward market information"
+  ],
+  "publicApiSurface": [
+    "AlphaClient",
+    "createLimitOrder",
+    "createMarketOrder",
+    "cancelOrder",
+    "amendOrder",
+    "proposeMatch",
+    "splitShares",
+    "mergeShares",
+    "claim",
+    "getPositions",
+    "getOrderbook",
+    "getOpenOrders",
+    "getWalletOrdersFromApi",
+    "getLiveMarkets",
+    "getMarket",
+    "getMarketsOnChain",
+    "getLiveMarketsFromApi",
+    "getRewardMarkets",
+    "calculateFee",
+    "calculateMatchingOrders",
+    "getMarketGlobalState"
+  ]
+}
